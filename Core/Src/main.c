@@ -21,6 +21,8 @@
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
+#include <stdio.h>
+#include <string.h>
 #include "config.h"
 #include "sx126x.h"
 #include "sx126x_hal_board.h"
@@ -53,6 +55,8 @@ typedef struct {
 
 static sx126x_hal_board_t sx126x_board_ctx;
 static sx126x_device_t sx126x_device;
+static uint32_t hardware_id = 0;
+static uint32_t tx_count = 0;
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -160,7 +164,7 @@ int main(void)
   sx126x_pkt_params_lora_t pkt_params = {
       .preamble_len_in_symb = g_lora_config.preamble_length,
       .header_type = SX126X_LORA_PKT_EXPLICIT,
-      .pld_len_in_bytes = 16,
+      .pld_len_in_bytes = 255,
       .crc_is_on = false,
       .invert_iq_is_on = false};
   sx126x_set_lora_pkt_params(sx126x_device.context, &pkt_params);
@@ -169,6 +173,17 @@ int main(void)
   sx126x_set_tx_params(sx126x_device.context, g_lora_config.tx_power,
                        SX126X_RAMP_3400_US);
 
+  // Generate random hardware ID from SX126x internal RNG
+  sx126x_get_random_numbers(sx126x_device.context, &hardware_id, 1);
+  if (hardware_id == 0) {
+    hardware_id = HAL_GetUIDw0() ^ HAL_GetTick();
+  }
+
+  // Transmit hardware ID over UART
+  char init_msg[64];
+  int init_len = snprintf(init_msg, sizeof(init_msg), "System Init - Hardware ID: 0x%08lX\r\n", (unsigned long)hardware_id);
+  HAL_UART_Transmit(&huart1, (uint8_t *)init_msg, init_len, 100);
+
   // Start continuous receive
   RxEn();
   sx126x_set_rx(sx126x_device.context, 0); // Continuous RX
@@ -176,14 +191,21 @@ int main(void)
 
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */
-  const uint8_t tx_payload[] = "Hello from STM32 LoRa\r\n";
+  char tx_payload[64];
   while (1)
   {
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
-    sx126x_transmit_packet(tx_payload, sizeof(tx_payload) - 1);
-    HAL_Delay(1000);
+    tx_count++;
+    int pld_len = snprintf(tx_payload, sizeof(tx_payload), "HW_ID: 0x%08lX | Count: %lu\r\n", (unsigned long)hardware_id, (unsigned long)tx_count);
+
+    // Send tx_payload directly to UART Transmit
+    HAL_UART_Transmit(&huart1, (uint8_t *)tx_payload, pld_len, 100);
+
+    // Transmit packet over LoRa
+    sx126x_transmit_packet((const uint8_t *)tx_payload, (uint8_t)pld_len);
+    HAL_Delay(5000);
   }
   /* USER CODE END 3 */
 }
@@ -361,17 +383,25 @@ void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin) {
 
     if (irq_mask & SX126X_IRQ_TX_DONE) {
       // TX completed from task, optionally signal success
-      const uint8_t tx_done_msg[] = "TX_DONE\r\n";
-      HAL_UART_Transmit(&huart1, (uint8_t *)tx_done_msg,
-                        sizeof(tx_done_msg) - 1, 100);
+      char tx_done_msg[64];
+      int len = snprintf(tx_done_msg, sizeof(tx_done_msg), "TX_DONE [HW_ID: 0x%08lX] | Count: %lu\r\n", (unsigned long)hardware_id, (unsigned long)tx_count);
+      HAL_UART_Transmit(&huart1, (uint8_t *)tx_done_msg, len, 100);
 
-      // Return to continuous RX after transmission
+      // Return to continuous RX after transmission with full RX capacity
+      sx126x_pkt_params_lora_t rx_pkt_params = {
+          .preamble_len_in_symb = g_lora_config.preamble_length,
+          .header_type = SX126X_LORA_PKT_EXPLICIT,
+          .pld_len_in_bytes = 255,
+          .crc_is_on = false,
+          .invert_iq_is_on = false};
+      sx126x_set_lora_pkt_params(sx126x_device.context, &rx_pkt_params);
+
       RxEn();
       sx126x_set_rx(sx126x_device.context, 0);
     } else if (irq_mask & SX126X_IRQ_RX_DONE) {
       sx126x_rx_buffer_status_t rx_buffer_status;
       sx126x_pkt_status_lora_t pkt_status;
-      uint8_t rx_data[16]; // Buffer for received data
+      uint8_t rx_data[256]; // Buffer for received data (full SX126x 256-byte capacity)
 
       // Get RX buffer status
       sx126x_get_rx_buffer_status(sx126x_device.context, &rx_buffer_status);
@@ -379,17 +409,21 @@ void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin) {
       // Get packet status
       sx126x_get_lora_pkt_status(sx126x_device.context, &pkt_status);
 
+      uint16_t len_to_read = rx_buffer_status.pld_len_in_bytes;
+      if (len_to_read > sizeof(rx_data)) {
+        len_to_read = sizeof(rx_data);
+      }
+
       // Read received data
       sx126x_read_buffer(sx126x_device.context,
                          rx_buffer_status.buffer_start_pointer, rx_data,
-                         rx_buffer_status.pld_len_in_bytes);
+                         (uint8_t)len_to_read);
 
-      // Optional: echo received payload over UART for debug
-      HAL_UART_Transmit(&huart1, rx_data, rx_buffer_status.pld_len_in_bytes,
-                        100);
-      const uint8_t rx_done_msg[] = "\r\nRX_DONE\r\n";
-      HAL_UART_Transmit(&huart1, (uint8_t *)rx_done_msg,
-                        sizeof(rx_done_msg) - 1, 100);
+      // Echo received payload over UART for debug
+      HAL_UART_Transmit(&huart1, rx_d0ata, len_to_read, 100);
+      char rx_done_msg[64];
+      int len = snprintf(rx_done_msg, sizeof(rx_done_msg), "\r\nRX_DONE [HW_ID: 0x%08lX | Len: %u]\r\n", (unsigned long)hardware_id, (unsigned int)len_to_read);
+      HAL_UART_Transmit(&huart1, (uint8_t *)rx_done_msg, len, 100);
 
       // Return to continuous RX
       RxEn();
@@ -407,6 +441,15 @@ static void sx126x_transmit_packet(const uint8_t *payload,
 
   // Clear pending interrupts
   sx126x_clear_irq_status(sx126x_device.context, SX126X_IRQ_ALL);
+
+  // Set TX packet parameters matching actual payload length
+  sx126x_pkt_params_lora_t tx_pkt_params = {
+      .preamble_len_in_symb = g_lora_config.preamble_length,
+      .header_type = SX126X_LORA_PKT_EXPLICIT,
+      .pld_len_in_bytes = payload_len,
+      .crc_is_on = false,
+      .invert_iq_is_on = false};
+  sx126x_set_lora_pkt_params(sx126x_device.context, &tx_pkt_params);
 
   // Write payload into TX buffer
   sx126x_write_buffer(sx126x_device.context, 0x00, payload, payload_len);
@@ -431,7 +474,15 @@ static void sx126x_transmit_packet(const uint8_t *payload,
     HAL_Delay(10);
   }
 
-  // Go back to RX mode after transmit
+  // Restore RX packet parameters and return to continuous RX mode
+  sx126x_pkt_params_lora_t rx_pkt_params = {
+      .preamble_len_in_symb = g_lora_config.preamble_length,
+      .header_type = SX126X_LORA_PKT_EXPLICIT,
+      .pld_len_in_bytes = 255,
+      .crc_is_on = false,
+      .invert_iq_is_on = false};
+  sx126x_set_lora_pkt_params(sx126x_device.context, &rx_pkt_params);
+
   RxEn();
   sx126x_set_rx(sx126x_device.context, 0);
 }
