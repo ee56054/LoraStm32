@@ -57,6 +57,10 @@ static sx126x_hal_board_t sx126x_board_ctx;
 static sx126x_device_t sx126x_device;
 static uint32_t hardware_id = 0;
 static uint32_t tx_count = 0;
+static volatile bool rx_packet_received = false;
+static volatile bool tx_done_flag = false;
+static uint8_t rx_payload_buf[256];
+static uint16_t rx_payload_len = 0;
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -191,21 +195,35 @@ int main(void)
 
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */
-  char tx_payload[64];
+  char tx_payload[256];
   while (1)
   {
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
-    tx_count++;
-    int pld_len = snprintf(tx_payload, sizeof(tx_payload), "HW_ID: 0x%08lX | Count: %lu\r\n", (unsigned long)hardware_id, (unsigned long)tx_count);
+    if (rx_packet_received)
+    {
+      rx_packet_received = false;
 
-    // Send tx_payload directly to UART Transmit
-    HAL_UART_Transmit(&huart1, (uint8_t *)tx_payload, pld_len, 100);
+      // Trim trailing newline from received message for clean reply formatting
+      while (rx_payload_len > 0 && (rx_payload_buf[rx_payload_len - 1] == '\r' || rx_payload_buf[rx_payload_len - 1] == '\n'))
+      {
+        rx_payload_len--;
+      }
 
-    // Transmit packet over LoRa
-    sx126x_transmit_packet((const uint8_t *)tx_payload, (uint8_t)pld_len);
-    HAL_Delay(5000);
+      tx_count++;
+      // Formulate direct reply containing received message, Hardware ID, and count
+      int pld_len = snprintf(tx_payload, sizeof(tx_payload), "REPLY [HW_ID: 0x%08lX | Count: %lu] -> %.*s\r\n",
+                             (unsigned long)hardware_id, (unsigned long)tx_count,
+                             (int)rx_payload_len, rx_payload_buf);
+
+      // Send reply payload directly to UART Transmit
+      HAL_UART_Transmit(&huart1, (uint8_t *)tx_payload, pld_len, 100);
+
+      // Transmit reply packet back over LoRa (and automatically return to continuous RX)
+      sx126x_transmit_packet((const uint8_t *)tx_payload, (uint8_t)pld_len);
+    }
+    HAL_Delay(5);
   }
   /* USER CODE END 3 */
 }
@@ -382,6 +400,7 @@ void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin) {
     sx126x_get_and_clear_irq_status(sx126x_device.context, &irq_mask);
 
     if (irq_mask & SX126X_IRQ_TX_DONE) {
+      tx_done_flag = true;
       // TX completed from task, optionally signal success
       char tx_done_msg[64];
       int len = snprintf(tx_done_msg, sizeof(tx_done_msg), "TX_DONE [HW_ID: 0x%08lX] | Count: %lu\r\n", (unsigned long)hardware_id, (unsigned long)tx_count);
@@ -401,7 +420,6 @@ void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin) {
     } else if (irq_mask & SX126X_IRQ_RX_DONE) {
       sx126x_rx_buffer_status_t rx_buffer_status;
       sx126x_pkt_status_lora_t pkt_status;
-      uint8_t rx_data[256]; // Buffer for received data (full SX126x 256-byte capacity)
 
       // Get RX buffer status
       sx126x_get_rx_buffer_status(sx126x_device.context, &rx_buffer_status);
@@ -410,20 +428,24 @@ void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin) {
       sx126x_get_lora_pkt_status(sx126x_device.context, &pkt_status);
 
       uint16_t len_to_read = rx_buffer_status.pld_len_in_bytes;
-      if (len_to_read > sizeof(rx_data)) {
-        len_to_read = sizeof(rx_data);
+      if (len_to_read > sizeof(rx_payload_buf)) {
+        len_to_read = sizeof(rx_payload_buf);
       }
+      rx_payload_len = len_to_read;
 
-      // Read received data
+      // Read received data into buffer
       sx126x_read_buffer(sx126x_device.context,
-                         rx_buffer_status.buffer_start_pointer, rx_data,
+                         rx_buffer_status.buffer_start_pointer, rx_payload_buf,
                          (uint8_t)len_to_read);
 
       // Echo received payload over UART for debug
-      HAL_UART_Transmit(&huart1, rx_d0ata, len_to_read, 100);
+      HAL_UART_Transmit(&huart1, rx_payload_buf, len_to_read, 100);
       char rx_done_msg[64];
       int len = snprintf(rx_done_msg, sizeof(rx_done_msg), "\r\nRX_DONE [HW_ID: 0x%08lX | Len: %u]\r\n", (unsigned long)hardware_id, (unsigned int)len_to_read);
       HAL_UART_Transmit(&huart1, (uint8_t *)rx_done_msg, len, 100);
+
+      // Signal main loop that a packet was received and a reply transmission can occur
+      rx_packet_received = true;
 
       // Return to continuous RX
       RxEn();
@@ -434,13 +456,12 @@ void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin) {
 
 static void sx126x_transmit_packet(const uint8_t *payload,
                                    const uint8_t payload_len) {
-  sx126x_irq_mask_t irq_mask = SX126X_IRQ_NONE;
-
   // Force radio to standby before changing buffer/state
   sx126x_set_standby(sx126x_device.context, SX126X_STANDBY_CFG_RC);
 
-  // Clear pending interrupts
+  // Clear pending interrupts and reset TX flag
   sx126x_clear_irq_status(sx126x_device.context, SX126X_IRQ_ALL);
+  tx_done_flag = false;
 
   // Set TX packet parameters matching actual payload length
   sx126x_pkt_params_lora_t tx_pkt_params = {
@@ -454,24 +475,13 @@ static void sx126x_transmit_packet(const uint8_t *payload,
   // Write payload into TX buffer
   sx126x_write_buffer(sx126x_device.context, 0x00, payload, payload_len);
 
-  // Start TX with a generous timeout (ms)
+  // Start TX with timeout (ms)
   TxEn();
   sx126x_set_tx(sx126x_device.context, 5000);
 
-  // Block until TX_DONE or timeout interrupt
-  for (int i = 0; i < 500; ++i) {
-    sx126x_get_irq_status(sx126x_device.context, &irq_mask);
-
-    if (irq_mask & SX126X_IRQ_TX_DONE) {
-      sx126x_clear_irq_status(sx126x_device.context, SX126X_IRQ_TX_DONE);
-      break;
-    }
-    if (irq_mask & SX126X_IRQ_TIMEOUT) {
-      sx126x_clear_irq_status(sx126x_device.context, SX126X_IRQ_TIMEOUT);
-      break;
-    }
-
-    HAL_Delay(10);
+  // Wait until TX is completed via interrupt or fallback timeout
+  for (int i = 0; i < 500 && !tx_done_flag; ++i) {
+    HAL_Delay(5);
   }
 
   // Restore RX packet parameters and return to continuous RX mode
