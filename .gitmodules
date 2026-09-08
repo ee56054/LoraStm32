@@ -1,0 +1,4 @@
+[submodule "Drivers/sx126x_driver"]
+	path = Drivers/sx126x_driver
+	url = https://github.com/Lora-net/sx126x_driver.git
+
