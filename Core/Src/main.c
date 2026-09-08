@@ -438,8 +438,24 @@ void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin) {
                          rx_buffer_status.buffer_start_pointer, rx_payload_buf,
                          (uint8_t)len_to_read);
 
-      // Echo received payload over UART for debug
+      // Echo received payload as ASCII over UART for debug
+      const char rx_ascii_hdr[] = "RX ASCII: ";
+      HAL_UART_Transmit(&huart1, (uint8_t *)rx_ascii_hdr, sizeof(rx_ascii_hdr) - 1, 100);
       HAL_UART_Transmit(&huart1, rx_payload_buf, len_to_read, 100);
+
+      // Print received payload in HEX format
+      const char rx_hex_hdr[] = "\r\nRX HEX: ";
+      HAL_UART_Transmit(&huart1, (uint8_t *)rx_hex_hdr, sizeof(rx_hex_hdr) - 1, 100);
+      char hex_chunk[64];
+      int chunk_idx = 0;
+      for (uint16_t i = 0; i < len_to_read; i++) {
+        chunk_idx += snprintf(&hex_chunk[chunk_idx], sizeof(hex_chunk) - chunk_idx, "%02X ", rx_payload_buf[i]);
+        if (chunk_idx >= (int)sizeof(hex_chunk) - 4 || i == len_to_read - 1) {
+          HAL_UART_Transmit(&huart1, (uint8_t *)hex_chunk, chunk_idx, 100);
+          chunk_idx = 0;
+        }
+      }
+
       char rx_done_msg[64];
       int len = snprintf(rx_done_msg, sizeof(rx_done_msg), "\r\nRX_DONE [HW_ID: 0x%08lX | Len: %u]\r\n", (unsigned long)hardware_id, (unsigned int)len_to_read);
       HAL_UART_Transmit(&huart1, (uint8_t *)rx_done_msg, len, 100);
