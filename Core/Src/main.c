@@ -359,12 +359,21 @@ int main(void)
     {
       rx_packet_received = false;
 
+      // Trim trailing newline from received message for clean reply formatting
+      while (rx_payload_len > 0 && (rx_payload_buf[rx_payload_len - 1] == '\r' || rx_payload_buf[rx_payload_len - 1] == '\n'))
+      {
+        rx_payload_len--;
       // Update telemetry registers in Modbus mapping
       if (mb_mapping != NULL) {
         mb_mapping->tab_registers[2] = (uint16_t)(tx_count >> 16);
         mb_mapping->tab_registers[3] = (uint16_t)(tx_count & 0xFFFF);
       }
 
+      tx_count++;
+      // Formulate direct reply containing received message, Hardware ID, and count
+      int pld_len = snprintf(tx_payload, sizeof(tx_payload), "REPLY [HW_ID: 0x%08lX | Count: %lu] -> %.*s\r\n",
+                             (unsigned long)hardware_id, (unsigned long)tx_count,
+                             (int)rx_payload_len, rx_payload_buf);
       // Check if received message is a Modbus RTU frame and pass it to libmodbus
       int mb_res = -1;
       if (rx_payload_len >= 4 && _modbus_embedded_check_integrity(&mb_ctx, rx_payload_buf, rx_payload_len) > 0) {
@@ -372,6 +381,8 @@ int main(void)
         mb_res = modbus_reply(&mb_ctx, rx_payload_buf, rx_payload_len, mb_mapping);
       }
 
+      // Send reply payload directly to UART Transmit
+      HAL_UART_Transmit(&huart1, (uint8_t *)tx_payload, pld_len, 100);
       if (mb_res > 0) {
         tx_count++;
         char mb_done_msg[64];
@@ -385,6 +396,8 @@ int main(void)
           rx_payload_len--;
         }
 
+      // Transmit reply packet back over LoRa (and automatically return to continuous RX)
+      sx126x_transmit_packet((const uint8_t *)tx_payload, (uint8_t)pld_len);
         tx_count++;
         // Formulate direct reply containing received message, Hardware ID, and count
         int pld_len = snprintf(tx_payload, sizeof(tx_payload), "REPLY [HW_ID: 0x%08lX | Count: %lu] -> %.*s\r\n",
