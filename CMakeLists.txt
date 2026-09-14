@@ -40,6 +40,9 @@ add_subdirectory(cmake/stm32cubemx)
 # Add SX126x Driver Library
 add_subdirectory(Drivers/sx126x_driver)
 
+# Add libmodbus Library
+add_subdirectory(Drivers/libmodbus)
+
 # Link directories setup
 target_link_directories(${CMAKE_PROJECT_NAME} PRIVATE
     # Add user defined library search paths
@@ -71,6 +74,7 @@ list(REMOVE_ITEM CMAKE_C_IMPLICIT_LINK_LIBRARIES ob)
 target_link_libraries(${CMAKE_PROJECT_NAME}
     stm32cubemx
     sx126x_driver
+    libmodbus
 
     # Add user defined libraries
 )
