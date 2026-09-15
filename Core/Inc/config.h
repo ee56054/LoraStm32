@@ -13,6 +13,7 @@ typedef struct {
     sx126x_lora_cr_t coding_rate;
     uint16_t preamble_length;
     uint32_t rx_timeout;
+    uint8_t slave_id;
 } lora_config_t;
 
 extern lora_config_t g_lora_config;

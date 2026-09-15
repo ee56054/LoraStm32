@@ -55,6 +55,7 @@ target_sources(${CMAKE_PROJECT_NAME} PRIVATE
     Core/Src/sx126x_hal_board.c
     Core/Src/config.c
     Core/Src/cJSON.c
+    Core/Src/modbus_app.c
 )
 
 # Add include paths

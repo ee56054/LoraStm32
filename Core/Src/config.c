@@ -96,6 +96,7 @@ void config_init(void) {
     g_lora_config.coding_rate = SX126X_LORA_CR_4_6;
     g_lora_config.preamble_length = 8;
     g_lora_config.rx_timeout = 5000;
+    g_lora_config.slave_id = 1;
     
     // Try to load from flash
     config_load_from_flash();
@@ -137,6 +138,11 @@ bool config_load_from_flash(void) {
     item = cJSON_GetObjectItem(doc, "rx_timeout");
     if (cJSON_IsNumber(item)) g_lora_config.rx_timeout = item->valueint;
 
+    item = cJSON_GetObjectItem(doc, "slave_id");
+    if (cJSON_IsNumber(item) && item->valueint >= 1 && item->valueint <= 247) {
+        g_lora_config.slave_id = (uint8_t)item->valueint;
+    }
+
     cJSON_Delete(doc);
     return true;
 }
@@ -154,6 +160,7 @@ bool config_save_to_flash(void) {
     cJSON_AddStringToObject(doc, "coding_rate", cr_to_str(g_lora_config.coding_rate));
     cJSON_AddNumberToObject(doc, "preamble_length", g_lora_config.preamble_length);
     cJSON_AddNumberToObject(doc, "rx_timeout", g_lora_config.rx_timeout);
+    cJSON_AddNumberToObject(doc, "slave_id", g_lora_config.slave_id);
 
     char *json_str = cJSON_PrintUnformatted(doc);
     cJSON_Delete(doc);

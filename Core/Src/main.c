@@ -26,8 +26,7 @@
 #include "config.h"
 #include "sx126x.h"
 #include "sx126x_hal_board.h"
-#include "modbus.h"
-#include "modbus-private.h"
+#include "modbus_app.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -63,9 +62,6 @@ static volatile bool rx_packet_received = false;
 static volatile bool tx_done_flag = false;
 static uint8_t rx_payload_buf[256];
 static uint16_t rx_payload_len = 0;
-
-static modbus_t mb_ctx;
-static modbus_mapping_t *mb_mapping = NULL;
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -89,140 +85,16 @@ static void TxEn(void) {
   HAL_GPIO_WritePin(GPIOA, TXEN_Pin, GPIO_PIN_SET);
 }
 
-static uint16_t modbus_crc16(const uint8_t *buffer, uint16_t buffer_length) {
-  static const uint8_t table_crc_hi[] = {
-      0x00, 0xC1, 0x81, 0x40, 0x01, 0xC0, 0x80, 0x41, 0x01, 0xC0, 0x80, 0x41, 0x00, 0xC1,
-      0x81, 0x40, 0x01, 0xC0, 0x80, 0x41, 0x00, 0xC1, 0x81, 0x40, 0x00, 0xC1, 0x81, 0x40,
-      0x01, 0xC0, 0x80, 0x41, 0x01, 0xC0, 0x80, 0x41, 0x00, 0xC1, 0x81, 0x40, 0x00, 0xC1,
-      0x81, 0x40, 0x01, 0xC0, 0x80, 0x41, 0x00, 0xC1, 0x81, 0x40, 0x01, 0xC0, 0x80, 0x41,
-      0x01, 0xC0, 0x80, 0x41, 0x00, 0xC1, 0x81, 0x40, 0x01, 0xC0, 0x80, 0x41, 0x00, 0xC1,
-      0x81, 0x40, 0x00, 0xC1, 0x81, 0x40, 0x01, 0xC0, 0x80, 0x41, 0x00, 0xC1, 0x81, 0x40,
-      0x01, 0xC0, 0x80, 0x41, 0x01, 0xC0, 0x80, 0x41, 0x00, 0xC1, 0x81, 0x40, 0x00, 0xC1,
-      0x81, 0x40, 0x01, 0xC0, 0x80, 0x41, 0x01, 0xC0, 0x80, 0x41, 0x00, 0xC1, 0x81, 0x40,
-      0x01, 0xC0, 0x80, 0x41, 0x00, 0xC1, 0x81, 0x40, 0x00, 0xC1, 0x81, 0x40, 0x01, 0xC0,
-      0x80, 0x41, 0x01, 0xC0, 0x80, 0x41, 0x00, 0xC1, 0x81, 0x40, 0x00, 0xC1, 0x81, 0x40,
-      0x01, 0xC0, 0x80, 0x41, 0x00, 0xC1, 0x81, 0x40, 0x01, 0xC0, 0x80, 0x41, 0x01, 0xC0,
-      0x80, 0x41, 0x00, 0xC1, 0x81, 0x40, 0x00, 0xC1, 0x81, 0x40, 0x01, 0xC0, 0x80, 0x41,
-      0x01, 0xC0, 0x80, 0x41, 0x00, 0xC1, 0x81, 0x40, 0x01, 0xC0, 0x80, 0x41, 0x00, 0xC1,
-      0x81, 0x40, 0x00, 0xC1, 0x81, 0x40, 0x01, 0xC0, 0x80, 0x41, 0x00, 0xC1, 0x81, 0x40,
-      0x01, 0xC0, 0x80, 0x41, 0x01, 0xC0, 0x80, 0x41, 0x00, 0xC1, 0x81, 0x40, 0x01, 0xC0,
-      0x80, 0x41, 0x00, 0xC1, 0x81, 0x40, 0x00, 0xC1, 0x81, 0x40, 0x01, 0xC0, 0x80, 0x41,
-      0x01, 0xC0, 0x80, 0x41, 0x00, 0xC1, 0x81, 0x40, 0x00, 0xC1, 0x81, 0x40, 0x01, 0xC0,
-      0x80, 0x41, 0x00, 0xC1, 0x81, 0x40, 0x01, 0xC0, 0x80, 0x41, 0x01, 0xC0, 0x80, 0x41,
-      0x00, 0xC1, 0x81, 0x40
-  };
-  static const uint8_t table_crc_lo[] = {
-      0x00, 0xC0, 0xC1, 0x01, 0xC3, 0x03, 0x02, 0xC2, 0xC6, 0x06, 0x07, 0xC7, 0x05, 0xC5,
-      0xC4, 0x04, 0xCC, 0x0C, 0x0D, 0xCD, 0x0F, 0xCF, 0xCE, 0x0E, 0x0A, 0xCA, 0xCB, 0x0B,
-      0xC9, 0x09, 0x08, 0xC8, 0xD8, 0x18, 0x19, 0xD9, 0x1B, 0xDB, 0xDA, 0x1A, 0x1E, 0xDE,
-      0xDF, 0x1F, 0xDD, 0x1D, 0x1C, 0xDC, 0x14, 0xD4, 0xD5, 0x15, 0xD7, 0x17, 0x16, 0xD6,
-      0xD2, 0x12, 0x13, 0xD3, 0x11, 0xD1, 0xD0, 0x10, 0xF0, 0x30, 0x31, 0xF1, 0x33, 0xF3,
-      0xF2, 0x32, 0x36, 0xF6, 0xF7, 0x37, 0xF5, 0x35, 0x34, 0xF4, 0x3C, 0xFC, 0xFD, 0x3D,
-      0xFF, 0x3F, 0x3E, 0xFE, 0xFA, 0x3A, 0x3B, 0xFB, 0x39, 0xF9, 0xF8, 0x38, 0x28, 0xE8,
-      0xE9, 0x29, 0xEB, 0x2B, 0x2A, 0xEA, 0xEE, 0x2E, 0x2F, 0xEF, 0x2D, 0xED, 0xEC, 0x2C,
-      0xE4, 0x24, 0x25, 0xE5, 0x27, 0xE7, 0xE6, 0x26, 0x22, 0xE2, 0xE3, 0x23, 0xE1, 0x21,
-      0x20, 0xE0, 0xA0, 0x60, 0x61, 0xA1, 0x63, 0xA3, 0xA2, 0x62, 0x66, 0xA6, 0xA7, 0x67,
-      0xA5, 0x65, 0x64, 0xA4, 0x6C, 0xAC, 0xAD, 0x6D, 0xAF, 0x6F, 0x6E, 0xAE, 0xAA, 0x6A,
-      0x6B, 0xAB, 0x69, 0xA9, 0xA8, 0x68, 0x78, 0xB8, 0xB9, 0x79, 0xBB, 0x7B, 0x7A, 0xBA,
-      0xBE, 0x7E, 0x7F, 0xBF, 0x7D, 0xBD, 0xBC, 0x7C, 0xB4, 0x74, 0x75, 0xB5, 0x77, 0xB7,
-      0xB6, 0x76, 0x72, 0xB2, 0xB3, 0x73, 0xB1, 0x71, 0x70, 0xB0, 0x50, 0x90, 0x91, 0x51,
-      0x93, 0x53, 0x52, 0x92, 0x96, 0x56, 0x57, 0x97, 0x55, 0x95, 0x94, 0x54, 0x9C, 0x5C,
-      0x5D, 0x9D, 0x5F, 0x9F, 0x9E, 0x5E, 0x5A, 0x9A, 0x9B, 0x5B, 0x99, 0x59, 0x58, 0x98,
-      0x88, 0x48, 0x49, 0x89, 0x4B, 0x8B, 0x8A, 0x4A, 0x4E, 0x8E, 0x8F, 0x4F, 0x8D, 0x4D,
-      0x4C, 0x8C, 0x44, 0x84, 0x85, 0x45, 0x87, 0x47, 0x46, 0x86, 0x82, 0x42, 0x43, 0x83,
-      0x41, 0x81, 0x80, 0x40
-  };
-  uint8_t crc_hi = 0xFF;
-  uint8_t crc_lo = 0xFF;
-  while (buffer_length--) {
-    unsigned int i = crc_lo ^ *buffer++;
-    crc_lo = crc_hi ^ table_crc_hi[i];
-    crc_hi = table_crc_lo[i];
-  }
-  return (crc_hi << 8) | crc_lo;
+static void on_valve_state_changed(uint8_t valve_idx, bool is_open) {
+  char msg[64];
+  int len = snprintf(msg, sizeof(msg), "[VALVE ACTION] Valve %u is now %s\r\n",
+                     valve_idx + 1, is_open ? "OPEN (ON)" : "CLOSED (OFF)");
+  HAL_UART_Transmit(&huart1, (uint8_t *)msg, len, 100);
+
+  // Ready for hardware relay/GPIO assignment if needed, for example:
+  // if (valve_idx == 0) HAL_GPIO_WritePin(GPIOB, GPIO_PIN_12, is_open ? GPIO_PIN_SET : GPIO_PIN_RESET);
+  // else if (valve_idx == 1) HAL_GPIO_WritePin(GPIOB, GPIO_PIN_13, is_open ? GPIO_PIN_SET : GPIO_PIN_RESET);
 }
-
-static int _modbus_embedded_set_slave(modbus_t *ctx, int slave) {
-  ctx->slave = slave;
-  return 0;
-}
-
-static int _modbus_embedded_build_request_basis(modbus_t *ctx, int function, int addr, int nb, uint8_t *req) {
-  req[0] = ctx->slave;
-  req[1] = function;
-  req[2] = addr >> 8;
-  req[3] = addr & 0xFF;
-  req[4] = nb >> 8;
-  req[5] = nb & 0xFF;
-  return 6;
-}
-
-static int _modbus_embedded_build_response_basis(sft_t *sft, uint8_t *rsp) {
-  rsp[0] = sft->slave;
-  rsp[1] = sft->function;
-  return 2;
-}
-
-static int _modbus_embedded_get_response_tid(const uint8_t *req) {
-  (void)req;
-  return 0;
-}
-
-static int _modbus_embedded_send_msg_pre(uint8_t *req, int req_length) {
-  uint16_t crc = modbus_crc16(req, req_length);
-  req[req_length++] = crc & 0xFF;
-  req[req_length++] = (crc >> 8) & 0xFF;
-  return req_length;
-}
-
-static ssize_t _modbus_embedded_send(modbus_t *ctx, const uint8_t *req, int req_length) {
-  (void)ctx;
-  const char mb_tx_hdr[] = "MODBUS TX: ";
-  HAL_UART_Transmit(&huart1, (uint8_t *)mb_tx_hdr, sizeof(mb_tx_hdr) - 1, 100);
-  for (int i = 0; i < req_length; i++) {
-    char hex[4];
-    snprintf(hex, sizeof(hex), "%02X ", req[i]);
-    HAL_UART_Transmit(&huart1, (uint8_t *)hex, strlen(hex), 100);
-  }
-  HAL_UART_Transmit(&huart1, (uint8_t *)"\r\n", 2, 100);
-
-  // Transmit Modbus response over LoRa
-  sx126x_transmit_packet(req, (uint8_t)req_length);
-  return req_length;
-}
-
-static int _modbus_embedded_check_integrity(modbus_t *ctx, uint8_t *msg, const int msg_length) {
-  (void)ctx;
-  if (msg_length < 4) {
-    return -1;
-  }
-  uint16_t crc_calc = modbus_crc16(msg, msg_length - 2);
-  uint16_t crc_recv = msg[msg_length - 2] | (msg[msg_length - 1] << 8);
-  return (crc_calc == crc_recv) ? msg_length : -1;
-}
-
-static const modbus_backend_t modbus_embedded_backend = {
-    .backend_type = _MODBUS_BACKEND_TYPE_RTU,
-    .header_length = 1,
-    .checksum_length = 2,
-    .max_adu_length = 256,
-    .set_slave = _modbus_embedded_set_slave,
-    .build_request_basis = _modbus_embedded_build_request_basis,
-    .build_response_basis = _modbus_embedded_build_response_basis,
-    .get_response_tid = _modbus_embedded_get_response_tid,
-    .send_msg_pre = _modbus_embedded_send_msg_pre,
-    .send = _modbus_embedded_send,
-    .receive = NULL,
-    .recv = NULL,
-    .check_integrity = _modbus_embedded_check_integrity,
-    .pre_check_confirmation = NULL,
-    .connect = NULL,
-    .is_connected = NULL,
-    .close = NULL,
-    .flush = NULL,
-    .select = NULL,
-    .free = NULL
-};
 /* USER CODE END 0 */
 
 /**
@@ -323,23 +195,17 @@ int main(void)
     hardware_id = HAL_GetUIDw0() ^ HAL_GetTick();
   }
 
-  // Initialize Modbus RTU / LoRa Context
-  _modbus_init_common(&mb_ctx);
-  mb_ctx.backend = &modbus_embedded_backend;
-  modbus_set_slave(&mb_ctx, 1); // Default slave address 1
+  // Initialize Modbus RTU module with LoRa transmission callback and configured Slave ID
+  modbus_app_init(g_lora_config.slave_id, hardware_id, sx126x_transmit_packet);
+  modbus_app_set_valve_callback(on_valve_state_changed);
 
-  // Initialize Modbus mapping (16 coils, 16 discrete inputs, 16 holding registers, 16 input registers)
-  mb_mapping = modbus_mapping_new(16, 16, 16, 16);
-  if (mb_mapping != NULL) {
-    mb_mapping->tab_registers[0] = (uint16_t)(hardware_id >> 16);
-    mb_mapping->tab_registers[1] = (uint16_t)(hardware_id & 0xFFFF);
-    mb_mapping->tab_registers[2] = 0;
-    mb_mapping->tab_registers[3] = 0;
-  }
+  // Initialize sensors (e.g. Sensor 1: 25.0 C -> 250, Sensor 2: 1013 hPa)
+  modbus_app_set_sensor_values(250, 1013);
 
-  // Transmit hardware ID over UART
-  char init_msg[64];
-  int init_len = snprintf(init_msg, sizeof(init_msg), "System Init - Hardware ID: 0x%08lX\r\n", (unsigned long)hardware_id);
+  // Transmit hardware ID and Modbus Slave ID over UART
+  char init_msg[96];
+  int init_len = snprintf(init_msg, sizeof(init_msg), "System Init - Hardware ID: 0x%08lX | Modbus Slave ID: %u\r\n",
+                          (unsigned long)hardware_id, (unsigned int)g_lora_config.slave_id);
   HAL_UART_Transmit(&huart1, (uint8_t *)init_msg, init_len, 100);
 
   // Start continuous receive
@@ -359,45 +225,23 @@ int main(void)
     {
       rx_packet_received = false;
 
-      // Trim trailing newline from received message for clean reply formatting
-      while (rx_payload_len > 0 && (rx_payload_buf[rx_payload_len - 1] == '\r' || rx_payload_buf[rx_payload_len - 1] == '\n'))
+      // Update runtime telemetry in Modbus holding registers
+      modbus_app_update_telemetry(tx_count);
+
+      // Process received packet via Modbus handler
+      int mb_res = modbus_app_process_packet(rx_payload_buf, rx_payload_len);
+      if (mb_res > 0)
       {
-        rx_payload_len--;
-      // Update telemetry registers in Modbus mapping
-      if (mb_mapping != NULL) {
-        mb_mapping->tab_registers[2] = (uint16_t)(tx_count >> 16);
-        mb_mapping->tab_registers[3] = (uint16_t)(tx_count & 0xFFFF);
-      }
-
-      tx_count++;
-      // Formulate direct reply containing received message, Hardware ID, and count
-      int pld_len = snprintf(tx_payload, sizeof(tx_payload), "REPLY [HW_ID: 0x%08lX | Count: %lu] -> %.*s\r\n",
-                             (unsigned long)hardware_id, (unsigned long)tx_count,
-                             (int)rx_payload_len, rx_payload_buf);
-      // Check if received message is a Modbus RTU frame and pass it to libmodbus
-      int mb_res = -1;
-      if (rx_payload_len >= 4 && _modbus_embedded_check_integrity(&mb_ctx, rx_payload_buf, rx_payload_len) > 0) {
-        // Send message to libmodbus for processing and replying
-        mb_res = modbus_reply(&mb_ctx, rx_payload_buf, rx_payload_len, mb_mapping);
-      }
-
-      // Send reply payload directly to UART Transmit
-      HAL_UART_Transmit(&huart1, (uint8_t *)tx_payload, pld_len, 100);
-      if (mb_res > 0) {
         tx_count++;
-        char mb_done_msg[64];
-        int len = snprintf(mb_done_msg, sizeof(mb_done_msg), "MODBUS Reply Processed [Bytes: %d | Count: %lu]\r\n", mb_res, (unsigned long)tx_count);
-        HAL_UART_Transmit(&huart1, (uint8_t *)mb_done_msg, len, 100);
       }
-      else {
+      else
+      {
         // Fallback for non-Modbus message: text reply
         while (rx_payload_len > 0 && (rx_payload_buf[rx_payload_len - 1] == '\r' || rx_payload_buf[rx_payload_len - 1] == '\n'))
         {
           rx_payload_len--;
         }
 
-      // Transmit reply packet back over LoRa (and automatically return to continuous RX)
-      sx126x_transmit_packet((const uint8_t *)tx_payload, (uint8_t)pld_len);
         tx_count++;
         // Formulate direct reply containing received message, Hardware ID, and count
         int pld_len = snprintf(tx_payload, sizeof(tx_payload), "REPLY [HW_ID: 0x%08lX | Count: %lu] -> %.*s\r\n",
