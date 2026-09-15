@@ -23,6 +23,7 @@ An embedded firmware project for **STM32F103C8T6** that implements a **Modbus RT
   - LoRa packet counter stored in Holding Registers 2–3.
 - **Modular Design**:
   - `Core/Src/modbus_app.c` completely isolates protocol parsing, register mapping, and CRC16 checks from `main.c`.
+  - `Core/Src/uart_app.c` encapsulates all UART transmission, logging, formatted output, and hex dump routines.
   - Fallback mechanism responds with plain text echo if received packet is not a Modbus frame.
 
 ---
@@ -99,11 +100,13 @@ LoraStm32/
 │   ├── Inc/
 │   │   ├── config.h            # LoRa and Modbus configuration struct
 │   │   ├── modbus_app.h        # Modbus application API & address definitions
+│   │   ├── uart_app.h          # UART transmit and debug logging interface
 │   │   ├── main.h              # Pin and peripheral definitions
 │   │   └── sx126x_hal_board.h  # Board-specific SX126x definitions
 │   └── Src/
 │       ├── config.c            # Flash load/save routines (JSON via cJSON)
 │       ├── modbus_app.c        # Modbus embedded backend, tables & handlers
+│       ├── uart_app.c          # UART wrapper, printf retarget, and hex printing
 │       ├── sx126x_hal.c        # SX126x HAL implementation (SPI + GPIO)
 │       └── main.c              # Application entry, LoRa task & callbacks
 └── Drivers/

@@ -56,6 +56,7 @@ target_sources(${CMAKE_PROJECT_NAME} PRIVATE
     Core/Src/config.c
     Core/Src/cJSON.c
     Core/Src/modbus_app.c
+    Core/Src/uart_app.c
 )
 
 # Add include paths

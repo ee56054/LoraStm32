@@ -27,6 +27,7 @@
 #include "sx126x.h"
 #include "sx126x_hal_board.h"
 #include "modbus_app.h"
+#include "uart_app.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -86,10 +87,8 @@ static void TxEn(void) {
 }
 
 static void on_valve_state_changed(uint8_t valve_idx, bool is_open) {
-  char msg[64];
-  int len = snprintf(msg, sizeof(msg), "[VALVE ACTION] Valve %u is now %s\r\n",
-                     valve_idx + 1, is_open ? "OPEN (ON)" : "CLOSED (OFF)");
-  HAL_UART_Transmit(&huart1, (uint8_t *)msg, len, 100);
+  uart_printf("[VALVE ACTION] Valve %u is now %s\r\n",
+              valve_idx + 1, is_open ? "OPEN (ON)" : "CLOSED (OFF)");
 
   // Ready for hardware relay/GPIO assignment if needed, for example:
   // if (valve_idx == 0) HAL_GPIO_WritePin(GPIOB, GPIO_PIN_12, is_open ? GPIO_PIN_SET : GPIO_PIN_RESET);
@@ -205,10 +204,8 @@ int main(void)
   modbus_app_set_sensor_values(0, 0);
 
   // Transmit hardware ID and Modbus Slave ID over UART
-  char init_msg[96];
-  int init_len = snprintf(init_msg, sizeof(init_msg), "System Init - Hardware ID: 0x%08lX | Modbus Slave ID: %u\r\n",
-                          (unsigned long)hardware_id, (unsigned int)g_lora_config.slave_id);
-  HAL_UART_Transmit(&huart1, (uint8_t *)init_msg, init_len, 100);
+  uart_printf("System Init - Hardware ID: 0x%08lX | Modbus Slave ID: %u\r\n",
+              (unsigned long)hardware_id, (unsigned int)g_lora_config.slave_id);
 
   // Start continuous receive
   RxEn();
@@ -251,7 +248,7 @@ int main(void)
                                (int)rx_payload_len, rx_payload_buf);
 
         // Send reply payload directly to UART Transmit
-        HAL_UART_Transmit(&huart1, (uint8_t *)tx_payload, pld_len, 100);
+        uart_send((const uint8_t *)tx_payload, pld_len);
 
         // Transmit reply packet back over LoRa (and automatically return to continuous RX)
         sx126x_transmit_packet((const uint8_t *)tx_payload, (uint8_t)pld_len);
@@ -436,9 +433,7 @@ void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin) {
     if (irq_mask & SX126X_IRQ_TX_DONE) {
       tx_done_flag = true;
       // TX completed from task, optionally signal success
-      char tx_done_msg[64];
-      int len = snprintf(tx_done_msg, sizeof(tx_done_msg), "TX_DONE [HW_ID: 0x%08lX] | Count: %lu\r\n", (unsigned long)hardware_id, (unsigned long)tx_count);
-      HAL_UART_Transmit(&huart1, (uint8_t *)tx_done_msg, len, 100);
+      uart_printf("TX_DONE [HW_ID: 0x%08lX] | Count: %lu\r\n", (unsigned long)hardware_id, (unsigned long)tx_count);
 
       // Return to continuous RX after transmission with full RX capacity
       sx126x_pkt_params_lora_t rx_pkt_params = {
@@ -473,21 +468,8 @@ void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin) {
                          (uint8_t)len_to_read);
 
       // Print received payload in HEX format
-      const char rx_hex_hdr[] = "RX HEX: ";
-      HAL_UART_Transmit(&huart1, (uint8_t *)rx_hex_hdr, sizeof(rx_hex_hdr) - 1, 100);
-      char hex_chunk[64];
-      int chunk_idx = 0;
-      for (uint16_t i = 0; i < len_to_read; i++) {
-        chunk_idx += snprintf(&hex_chunk[chunk_idx], sizeof(hex_chunk) - chunk_idx, "%02X ", rx_payload_buf[i]);
-        if (chunk_idx >= (int)sizeof(hex_chunk) - 4 || i == len_to_read - 1) {
-          HAL_UART_Transmit(&huart1, (uint8_t *)hex_chunk, chunk_idx, 100);
-          chunk_idx = 0;
-        }
-      }
-
-      char rx_done_msg[64];
-      int len = snprintf(rx_done_msg, sizeof(rx_done_msg), "\r\nRX_DONE [HW_ID: 0x%08lX | Len: %u]\r\n", (unsigned long)hardware_id, (unsigned int)len_to_read);
-      HAL_UART_Transmit(&huart1, (uint8_t *)rx_done_msg, len, 100);
+      uart_print_hex("RX HEX: ", rx_payload_buf, len_to_read);
+      uart_printf("RX_DONE [HW_ID: 0x%08lX | Len: %u]\r\n", (unsigned long)hardware_id, (unsigned int)len_to_read);
 
       // Signal main loop that a packet was received and a reply transmission can occur
       rx_packet_received = true;

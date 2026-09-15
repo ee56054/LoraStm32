@@ -2,10 +2,9 @@
 #include "modbus.h"
 #include "modbus-private.h"
 #include "config.h"
+#include "uart_app.h"
 #include <stdio.h>
 #include <string.h>
-
-extern UART_HandleTypeDef huart1;
 
 static modbus_t mb_ctx;
 static modbus_mapping_t *mb_mapping = NULL;
@@ -100,14 +99,7 @@ static int _modbus_embedded_send_msg_pre(uint8_t *req, int req_length) {
 
 static ssize_t _modbus_embedded_send(modbus_t *ctx, const uint8_t *req, int req_length) {
   (void)ctx;
-  const char mb_tx_hdr[] = "MODBUS TX: ";
-  HAL_UART_Transmit(&huart1, (uint8_t *)mb_tx_hdr, sizeof(mb_tx_hdr) - 1, 100);
-  for (int i = 0; i < req_length; i++) {
-    char hex[4];
-    snprintf(hex, sizeof(hex), "%02X ", req[i]);
-    HAL_UART_Transmit(&huart1, (uint8_t *)hex, strlen(hex), 100);
-  }
-  HAL_UART_Transmit(&huart1, (uint8_t *)"\r\n", 2, 100);
+  uart_print_hex("MODBUS TX: ", req, (uint16_t)req_length);
 
   if (g_tx_callback != NULL) {
     g_tx_callback(req, (uint8_t)req_length);
@@ -260,9 +252,7 @@ int modbus_app_process_packet(uint8_t *rx_payload, uint16_t rx_len) {
   // Process Modbus RTU message and formulate response
   int mb_res = modbus_reply(&mb_ctx, rx_payload, rx_len, mb_mapping);
   if (mb_res > 0) {
-    char mb_done_msg[64];
-    int len = snprintf(mb_done_msg, sizeof(mb_done_msg), "MODBUS Reply Processed [Bytes: %d]\r\n", mb_res);
-    HAL_UART_Transmit(&huart1, (uint8_t *)mb_done_msg, len, 100);
+    uart_printf("MODBUS Reply Processed [Bytes: %d]\r\n", mb_res);
 
     // Detect if coil write (FC 05, 15) or holding register write (FC 06, 16) changed valve states
     for (uint8_t i = 0; i < 2; i++) {
@@ -283,9 +273,7 @@ int modbus_app_process_packet(uint8_t *rx_payload, uint16_t rx_len) {
         mb_mapping->tab_input_bits[i] = val;
         mb_mapping->tab_registers[MODBUS_HOLD_REG_VALVE_1 + i] = val;
 
-        char log[48];
-        int log_len = snprintf(log, sizeof(log), "[MODBUS] Valve %u -> %s\r\n", i + 1, new_state ? "OPEN" : "CLOSED");
-        HAL_UART_Transmit(&huart1, (uint8_t *)log, log_len, 100);
+        uart_printf("[MODBUS] Valve %u -> %s\r\n", i + 1, new_state ? "OPEN" : "CLOSED");
 
         if (g_valve_callback != NULL) {
           g_valve_callback(i, new_state);
@@ -302,9 +290,7 @@ int modbus_app_process_packet(uint8_t *rx_payload, uint16_t rx_len) {
         g_lora_config.slave_id = new_id;
         config_save_to_flash();
 
-        char id_msg[64];
-        int id_len = snprintf(id_msg, sizeof(id_msg), "[MODBUS] Slave ID changed to %u & saved to Flash\r\n", new_id);
-        HAL_UART_Transmit(&huart1, (uint8_t *)id_msg, id_len, 100);
+        uart_printf("[MODBUS] Slave ID changed to %u & saved to Flash\r\n", new_id);
       } else {
         // Invalid slave ID: revert holding register to current active slave ID
         mb_mapping->tab_registers[MODBUS_HOLD_REG_SLAVE_ID] = mb_ctx.slave;
