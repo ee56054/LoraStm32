@@ -472,13 +472,8 @@ void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin) {
                          rx_buffer_status.buffer_start_pointer, rx_payload_buf,
                          (uint8_t)len_to_read);
 
-      // Echo received payload as ASCII over UART for debug
-      const char rx_ascii_hdr[] = "RX ASCII: ";
-      HAL_UART_Transmit(&huart1, (uint8_t *)rx_ascii_hdr, sizeof(rx_ascii_hdr) - 1, 100);
-      HAL_UART_Transmit(&huart1, rx_payload_buf, len_to_read, 100);
-
       // Print received payload in HEX format
-      const char rx_hex_hdr[] = "\r\nRX HEX: ";
+      const char rx_hex_hdr[] = "RX HEX: ";
       HAL_UART_Transmit(&huart1, (uint8_t *)rx_hex_hdr, sizeof(rx_hex_hdr) - 1, 100);
       char hex_chunk[64];
       int chunk_idx = 0;
