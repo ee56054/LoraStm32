@@ -199,8 +199,10 @@ int main(void)
   modbus_app_init(g_lora_config.slave_id, hardware_id, sx126x_transmit_packet);
   modbus_app_set_valve_callback(on_valve_state_changed);
 
-  // Initialize sensors (e.g. Sensor 1: 25.0 C -> 250, Sensor 2: 1013 hPa)
-  modbus_app_set_sensor_values(250, 1013);
+  // Default status of valves are 0 (Closed) and sensors are 0
+  modbus_app_set_valve_state(0, false);
+  modbus_app_set_valve_state(1, false);
+  modbus_app_set_sensor_values(0, 0);
 
   // Transmit hardware ID and Modbus Slave ID over UART
   char init_msg[96];

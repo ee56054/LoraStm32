@@ -46,8 +46,8 @@ An embedded firmware project for **STM32F103C8T6** that implements a **Modbus RT
 ### Input Registers (3x / Read-Only)
 | Address | Name | Function Codes | Description |
 | :---: | :--- | :---: | :--- |
-| `0x0000` (0) | **Sensor 1** | `04` | 16-bit sensor reading (e.g. Temperature `250` = 25.0 °C) |
-| `0x0001` (1) | **Sensor 2** | `04` | 16-bit sensor reading (e.g. Pressure `1013` = 1013 hPa) |
+| `0x0000` (0) | **Sensor 1** | `04` | 16-bit sensor reading (Default: `0`) |
+| `0x0001` (1) | **Sensor 2** | `04` | 16-bit sensor reading (Default: `0`) |
 
 ### Holding Registers (4x / Read-Write)
 | Address | Name | Access | Function Codes | Description |
@@ -58,8 +58,8 @@ An embedded firmware project for **STM32F103C8T6** that implements a **Modbus RT
 | `0x0003` (3) | **TX Count Low** | RO | `03` | LoRa packet counter bits [15..0] |
 | `0x0004` (4) | **Valve 1 Register** | RW | `03`, `06`, `16` | Mirrored Valve 1 (`0` = Closed, `1` = Open) |
 | `0x0005` (5) | **Valve 2 Register** | RW | `03`, `06`, `16` | Mirrored Valve 2 (`0` = Closed, `1` = Open) |
-| `0x0006` (6) | **Sensor 1 Register**| RO | `03` | Mirrored Sensor 1 for masters reading 4x |
-| `0x0007` (7) | **Sensor 2 Register**| RO | `03` | Mirrored Sensor 2 for masters reading 4x |
+| `0x0006` (6) | **Sensor 1 Register**| RO | `03` | Mirrored Sensor 1 (Default: `0`) |
+| `0x0007` (7) | **Sensor 2 Register**| RO | `03` | Mirrored Sensor 2 (Default: `0`) |
 | `0x0008` (8) | **Slave ID** | RW | `03`, `06`, `16` | **Modbus Slave Address (1..247)**; writing here updates ID and persists to Flash |
 
 ---
