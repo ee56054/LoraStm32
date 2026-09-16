@@ -108,13 +108,21 @@ static ssize_t _modbus_embedded_send(modbus_t *ctx, const uint8_t *req, int req_
 }
 
 static int _modbus_embedded_check_integrity(modbus_t *ctx, uint8_t *msg, const int msg_length) {
-  (void)ctx;
   if (msg_length < 4) {
     return -1;
   }
   uint16_t crc_calc = modbus_crc16(msg, msg_length - 2);
   uint16_t crc_recv = msg[msg_length - 2] | (msg[msg_length - 1] << 8);
-  return (crc_calc == crc_recv) ? msg_length : -1;
+  if (crc_calc != crc_recv) {
+    return -1;
+  }
+
+  int slave = msg[0];
+  if (ctx != NULL && slave != ctx->slave && slave != MODBUS_BROADCAST_ADDRESS) {
+    return 0;
+  }
+
+  return msg_length;
 }
 
 static const modbus_backend_t modbus_embedded_backend = {
@@ -234,9 +242,17 @@ int modbus_app_process_packet(uint8_t *rx_payload, uint16_t rx_len) {
     return -1;
   }
 
-  // Verify CRC16 frame integrity
-  if (_modbus_embedded_check_integrity(&mb_ctx, rx_payload, rx_len) <= 0) {
+  // Verify CRC16 frame integrity and filter by slave ID
+  int integrity = _modbus_embedded_check_integrity(&mb_ctx, rx_payload, rx_len);
+  if (integrity < 0) {
     return -1;
+  }
+
+  if (integrity == 0) {
+    // Valid Modbus frame, but addressed to another slave
+    uart_printf("[MODBUS] Ignored packet for Slave %u (current Slave is %u)\r\n",
+                (unsigned int)rx_payload[0], (unsigned int)mb_ctx.slave);
+    return 0;
   }
 
   // Save previous valve states before processing reply
@@ -253,7 +269,11 @@ int modbus_app_process_packet(uint8_t *rx_payload, uint16_t rx_len) {
   int mb_res = modbus_reply(&mb_ctx, rx_payload, rx_len, mb_mapping);
   if (mb_res > 0) {
     uart_printf("MODBUS Reply Processed [Bytes: %d]\r\n", mb_res);
+  } else if (mb_res == 0 && rx_payload[0] == MODBUS_BROADCAST_ADDRESS) {
+    uart_printf("[MODBUS] Broadcast command executed (no reply sent)\r\n");
+  }
 
+  if (mb_res >= 0) {
     // Detect if coil write (FC 05, 15) or holding register write (FC 06, 16) changed valve states
     for (uint8_t i = 0; i < 2; i++) {
       bool changed = false;

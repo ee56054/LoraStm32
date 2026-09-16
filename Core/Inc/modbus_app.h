@@ -92,8 +92,9 @@ void modbus_app_update_telemetry(uint32_t tx_count);
  * @brief Check if incoming packet is a Modbus RTU frame and process it
  * @param rx_payload Pointer to received payload buffer
  * @param rx_len Length of received payload
- * @return Positive integer (response byte count) if frame was handled by Modbus;
- *         <= 0 if frame is not a valid Modbus request for this slave.
+ * @return Positive integer (> 0, response byte count) if frame was handled and replied;
+ *         0 if frame is valid Modbus but ignored (addressed to another slave) or broadcast;
+ *         Negative (< 0) if frame is not a valid Modbus frame (CRC error or invalid format).
  */
 int modbus_app_process_packet(uint8_t *rx_payload, uint16_t rx_len);
 

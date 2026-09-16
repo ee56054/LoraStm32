@@ -233,6 +233,10 @@ int main(void)
       {
         tx_count++;
       }
+      else if (mb_res == 0)
+      {
+        // Valid Modbus packet addressed to another slave or broadcast: do not transmit reply
+      }
       else
       {
         // Fallback for non-Modbus message: text reply
