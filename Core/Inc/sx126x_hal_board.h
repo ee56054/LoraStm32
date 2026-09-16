@@ -42,19 +42,19 @@ typedef struct
 } sx126x_hal_board_t;
 
 /*
- * Pin definitions for STM32F103C8T6
+ * Pin definitions for E22-900MBL-SC (STM32F103C8T6)
  */
 #define SX126X_NSS_PORT      GPIOA
 #define SX126X_NSS_PIN       GPIO_PIN_4
 
-#define SX126X_RST_PORT      GPIOA
-#define SX126X_RST_PIN       GPIO_PIN_3
+#define SX126X_RST_PORT      GPIOB
+#define SX126X_RST_PIN       GPIO_PIN_0
 
-#define SX126X_DIO1_PORT     GPIOC
-#define SX126X_DIO1_PIN      GPIO_PIN_15
+#define SX126X_DIO1_PORT     GPIOA
+#define SX126X_DIO1_PIN      GPIO_PIN_3
 
-#define SX126X_BUSY_PORT     GPIOA
-#define SX126X_BUSY_PIN      GPIO_PIN_2
+#define SX126X_BUSY_PORT     GPIOB
+#define SX126X_BUSY_PIN      GPIO_PIN_1
 
 /*
  * SPI interface

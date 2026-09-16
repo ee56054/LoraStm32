@@ -18,11 +18,19 @@
 /* USER CODE END Header */
 /* Includes ------------------------------------------------------------------*/
 #include "main.h"
+#include "i2c.h"
+#include "spi.h"
+#include "tim.h"
+#include "usb_device.h"
+#include "gpio.h"
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
 #include <stdio.h>
 #include <string.h>
+#include "gpio.h"
+#include "spi.h"
+// #include "usb_device.h"
 #include "config.h"
 #include "sx126x.h"
 #include "sx126x_hal_board.h"
@@ -46,9 +54,6 @@
 /* USER CODE END PM */
 
 /* Private variables ---------------------------------------------------------*/
-SPI_HandleTypeDef hspi1;
-
-UART_HandleTypeDef huart1;
 
 /* USER CODE BEGIN PV */
 typedef struct {
@@ -67,9 +72,6 @@ static uint16_t rx_payload_len = 0;
 
 /* Private function prototypes -----------------------------------------------*/
 void SystemClock_Config(void);
-static void MX_GPIO_Init(void);
-static void MX_SPI1_Init(void);
-static void MX_USART1_UART_Init(void);
 /* USER CODE BEGIN PFP */
 static void sx126x_transmit_packet(const uint8_t *payload, const uint8_t payload_len);
 /* USER CODE END PFP */
@@ -77,13 +79,15 @@ static void sx126x_transmit_packet(const uint8_t *payload, const uint8_t payload
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
 static void RxEn(void) {
-  HAL_GPIO_WritePin(GPIOA, RXEN_Pin, GPIO_PIN_SET);
-  HAL_GPIO_WritePin(GPIOA, TXEN_Pin, GPIO_PIN_RESET);
+  HAL_GPIO_WritePin(E22_TXEN_GPIO_Port, E22_TXEN_Pin, GPIO_PIN_RESET);
+  HAL_GPIO_WritePin(E22_RXEN_GPIO_Port, E22_RXEN_Pin, GPIO_PIN_SET);
+  HAL_GPIO_WritePin(LED_TX_GPIO_Port, LED_TX_Pin, GPIO_PIN_SET);
 }
 
 static void TxEn(void) {
-  HAL_GPIO_WritePin(GPIOA, RXEN_Pin, GPIO_PIN_RESET);
-  HAL_GPIO_WritePin(GPIOA, TXEN_Pin, GPIO_PIN_SET);
+  HAL_GPIO_WritePin(E22_RXEN_GPIO_Port, E22_RXEN_Pin, GPIO_PIN_RESET);
+  HAL_GPIO_WritePin(E22_TXEN_GPIO_Port, E22_TXEN_Pin, GPIO_PIN_SET);
+  HAL_GPIO_WritePin(LED_TX_GPIO_Port, LED_TX_Pin, GPIO_PIN_RESET);
 }
 
 static void on_valve_state_changed(uint8_t valve_idx, bool is_open) {
@@ -125,8 +129,10 @@ int main(void)
 
   /* Initialize all configured peripherals */
   MX_GPIO_Init();
+  MX_I2C2_Init();
   MX_SPI1_Init();
-  MX_USART1_UART_Init();
+  MX_USB_DEVICE_Init();
+  MX_TIM2_Init();
   /* USER CODE BEGIN 2 */
   // Initialize SX126x HAL board context
   sx126x_hal_board_init(&sx126x_board_ctx, &hspi1);
@@ -271,6 +277,7 @@ void SystemClock_Config(void)
 {
   RCC_OscInitTypeDef RCC_OscInitStruct = {0};
   RCC_ClkInitTypeDef RCC_ClkInitStruct = {0};
+  RCC_PeriphCLKInitTypeDef PeriphClkInit = {0};
 
   /** Initializes the RCC Oscillators according to the specified parameters
   * in the RCC_OscInitTypeDef structure.
@@ -300,134 +307,17 @@ void SystemClock_Config(void)
   {
     Error_Handler();
   }
-}
-
-/**
-  * @brief SPI1 Initialization Function
-  * @param None
-  * @retval None
-  */
-static void MX_SPI1_Init(void)
-{
-
-  /* USER CODE BEGIN SPI1_Init 0 */
-
-  /* USER CODE END SPI1_Init 0 */
-
-  /* USER CODE BEGIN SPI1_Init 1 */
-
-  /* USER CODE END SPI1_Init 1 */
-  /* SPI1 parameter configuration*/
-  hspi1.Instance = SPI1;
-  hspi1.Init.Mode = SPI_MODE_MASTER;
-  hspi1.Init.Direction = SPI_DIRECTION_2LINES;
-  hspi1.Init.DataSize = SPI_DATASIZE_8BIT;
-  hspi1.Init.CLKPolarity = SPI_POLARITY_LOW;
-  hspi1.Init.CLKPhase = SPI_PHASE_1EDGE;
-  hspi1.Init.NSS = SPI_NSS_SOFT;
-  hspi1.Init.BaudRatePrescaler = SPI_BAUDRATEPRESCALER_64;
-  hspi1.Init.FirstBit = SPI_FIRSTBIT_MSB;
-  hspi1.Init.TIMode = SPI_TIMODE_DISABLE;
-  hspi1.Init.CRCCalculation = SPI_CRCCALCULATION_DISABLE;
-  hspi1.Init.CRCPolynomial = 10;
-  if (HAL_SPI_Init(&hspi1) != HAL_OK)
+  PeriphClkInit.PeriphClockSelection = RCC_PERIPHCLK_USB;
+  PeriphClkInit.UsbClockSelection = RCC_USBCLKSOURCE_PLL_DIV1_5;
+  if (HAL_RCCEx_PeriphCLKConfig(&PeriphClkInit) != HAL_OK)
   {
     Error_Handler();
   }
-  /* USER CODE BEGIN SPI1_Init 2 */
-
-  /* USER CODE END SPI1_Init 2 */
-
-}
-
-/**
-  * @brief USART1 Initialization Function
-  * @param None
-  * @retval None
-  */
-static void MX_USART1_UART_Init(void)
-{
-
-  /* USER CODE BEGIN USART1_Init 0 */
-
-  /* USER CODE END USART1_Init 0 */
-
-  /* USER CODE BEGIN USART1_Init 1 */
-
-  /* USER CODE END USART1_Init 1 */
-  huart1.Instance = USART1;
-  huart1.Init.BaudRate = 115200;
-  huart1.Init.WordLength = UART_WORDLENGTH_8B;
-  huart1.Init.StopBits = UART_STOPBITS_1;
-  huart1.Init.Parity = UART_PARITY_NONE;
-  huart1.Init.Mode = UART_MODE_TX_RX;
-  huart1.Init.HwFlowCtl = UART_HWCONTROL_NONE;
-  huart1.Init.OverSampling = UART_OVERSAMPLING_16;
-  if (HAL_UART_Init(&huart1) != HAL_OK)
-  {
-    Error_Handler();
-  }
-  /* USER CODE BEGIN USART1_Init 2 */
-
-  /* USER CODE END USART1_Init 2 */
-
-}
-
-/**
-  * @brief GPIO Initialization Function
-  * @param None
-  * @retval None
-  */
-static void MX_GPIO_Init(void)
-{
-  GPIO_InitTypeDef GPIO_InitStruct = {0};
-  /* USER CODE BEGIN MX_GPIO_Init_1 */
-
-  /* USER CODE END MX_GPIO_Init_1 */
-
-  /* GPIO Ports Clock Enable */
-  __HAL_RCC_GPIOC_CLK_ENABLE();
-  __HAL_RCC_GPIOD_CLK_ENABLE();
-  __HAL_RCC_GPIOA_CLK_ENABLE();
-  __HAL_RCC_GPIOB_CLK_ENABLE();
-
-  /*Configure GPIO pin Output Level */
-  HAL_GPIO_WritePin(GPIOA, TXEN_Pin|RXEN_Pin|RST_Pin|NSS_Pin, GPIO_PIN_RESET);
-
-  /*Configure GPIO pin : DIO1_Pin */
-  GPIO_InitStruct.Pin = DIO1_Pin;
-  GPIO_InitStruct.Mode = GPIO_MODE_INPUT;
-  GPIO_InitStruct.Pull = GPIO_NOPULL;
-  HAL_GPIO_Init(DIO1_GPIO_Port, &GPIO_InitStruct);
-
-  /*Configure GPIO pins : TXEN_Pin RXEN_Pin RST_Pin NSS_Pin */
-  GPIO_InitStruct.Pin = TXEN_Pin|RXEN_Pin|RST_Pin|NSS_Pin;
-  GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
-  GPIO_InitStruct.Pull = GPIO_NOPULL;
-  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
-  HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
-
-  /*Configure GPIO pin : BUSY_Pin */
-  GPIO_InitStruct.Pin = BUSY_Pin;
-  GPIO_InitStruct.Mode = GPIO_MODE_INPUT;
-  GPIO_InitStruct.Pull = GPIO_NOPULL;
-  HAL_GPIO_Init(BUSY_GPIO_Port, &GPIO_InitStruct);
-
-  /* USER CODE BEGIN MX_GPIO_Init_2 */
-  // DIO1 pin (PC15) - Input with interrupt
-  GPIO_InitStruct.Pin = DIO1_Pin;
-  GPIO_InitStruct.Mode = GPIO_MODE_IT_RISING;
-  GPIO_InitStruct.Pull = GPIO_PULLUP;
-  HAL_GPIO_Init(DIO1_GPIO_Port, &GPIO_InitStruct);
-
-  // Enable EXTI interrupt for DIO1 (PC15 -> EXTI15_10_IRQn)
-  HAL_NVIC_EnableIRQ(EXTI15_10_IRQn);
-  /* USER CODE END MX_GPIO_Init_2 */
 }
 
 /* USER CODE BEGIN 4 */
 void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin) {
-  if (GPIO_Pin == DIO1_Pin) // DIO1 interrupt (PC15)
+  if (GPIO_Pin == E22_DIO1_Pin) // E22 DIO1 interrupt (PA3 / EXTI3)
   {
     sx126x_irq_mask_t irq_mask = SX126X_IRQ_NONE;
 

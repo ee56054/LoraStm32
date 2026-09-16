@@ -244,8 +244,6 @@ int modbus_app_process_packet(uint8_t *rx_payload, uint16_t rx_len) {
     return -1;
   }
 
-  // Verify CRC16 frame integrity
-  if (_modbus_embedded_check_integrity(&mb_ctx, rx_payload, rx_len) <= 0) {
   // Verify CRC16 frame integrity and filter by slave ID
   int integrity = _modbus_embedded_check_integrity(&mb_ctx, rx_payload, rx_len);
   if (integrity < 0) {

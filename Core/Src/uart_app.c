@@ -1,22 +1,25 @@
 #include "uart_app.h"
+#include "usbd_cdc_if.h"
 #include <stdio.h>
 #include <stdarg.h>
 #include <string.h>
 
-extern UART_HandleTypeDef huart1;
-static UART_HandleTypeDef *g_huart = &huart1;
-
-void uart_app_init(UART_HandleTypeDef *huart) {
-  if (huart != NULL) {
-    g_huart = huart;
-  }
+void uart_app_init(void) {
+  // Assert USB_CTRL (PB5) to connect USB D+ pullup to host
+  HAL_GPIO_WritePin(USB_CTRL_GPIO_Port, USB_CTRL_Pin, GPIO_PIN_SET);
 }
 
 HAL_StatusTypeDef uart_send(const uint8_t *data, uint16_t len) {
-  if (g_huart == NULL || data == NULL || len == 0) {
+  if (data == NULL || len == 0) {
     return HAL_ERROR;
   }
-  return HAL_UART_Transmit(g_huart, (uint8_t *)data, len, 100);
+  uint32_t timeout = HAL_GetTick() + 50;
+  while (CDC_Transmit_FS((uint8_t *)data, len) == USBD_BUSY) {
+    if (HAL_GetTick() >= timeout) {
+      return HAL_BUSY;
+    }
+  }
+  return HAL_OK;
 }
 
 HAL_StatusTypeDef uart_print(const char *str) {

@@ -11,10 +11,9 @@ extern "C" {
 #endif
 
 /**
- * @brief Initialize UART application module with target UART handle
- * @param huart Pointer to UART_HandleTypeDef (e.g. &huart1)
+ * @brief Initialize Serial / USB communication module
  */
-void uart_app_init(UART_HandleTypeDef *huart);
+void uart_app_init(void);
 
 /**
  * @brief Transmit raw buffer over UART
