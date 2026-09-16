@@ -65,7 +65,7 @@ An embedded firmware project for **STM32F103C8T6** that implements a **Modbus RT
 
 ---
 
-## Hardware Pinout (STM32F103C8T6)
+## Hardware Pinout (E22-900MBL-SC / STM32F103C8T6)
 
 ### SX1262 LoRa Transceiver (SPI1 + GPIO)
 | STM32 Pin | Signal | Direction | Description |
@@ -73,18 +73,29 @@ An embedded firmware project for **STM32F103C8T6** that implements a **Modbus RT
 | **PA5** | SPI1_SCK | Output | SPI Clock |
 | **PA6** | SPI1_MISO | Input | SPI Master-In-Slave-Out |
 | **PA7** | SPI1_MOSI | Output | SPI Master-Out-Slave-In |
-| **PA4** | NSS | Output | SPI Chip Select (Active Low) |
-| **PA2** | BUSY | Input | SX1262 Busy Indicator |
-| **PA3** | RST | Output | SX1262 Hardware Reset (Active Low) |
-| **PC15** | DIO1 | Input (EXTI) | Interrupt on Rising Edge |
-| **PA0** | TXEN | Output | RF Switch TX Enable |
-| **PA1** | RXEN | Output | RF Switch RX Enable |
+| **PA4** | SPI_CS | Output | SPI Chip Select (Active Low) |
+| **PB1** | E22_BUSY | Input | SX1262 Busy Indicator |
+| **PB0** | E22_RESET | Output | SX1262 Hardware Reset (Active Low) |
+| **PA3** | E22_DIO1 | Input (EXTI3) | Interrupt on Rising Edge |
+| **PB12** | E22_TXEN | Output | RF Switch TX Enable |
+| **PB13** | E22_RXEN | Output | RF Switch RX Enable |
 
-### UART1 (Debug & Log)
+### OLED Display (0.96" SSD1306 128x64 via I2C2)
 | STM32 Pin | Signal | Direction | Description |
 | :--- | :--- | :---: | :--- |
-| **PA9** | USART1_TX | Output | 115200 baud, 8N1 |
-| **PA10** | USART1_RX | Input | 115200 baud, 8N1 |
+| **PB10** | I2C2_SCL | Output | I2C Clock |
+| **PB11** | I2C2_SDA | In/Out | I2C Data |
+
+### USB CDC & Board Peripherals
+| STM32 Pin | Signal | Direction | Description |
+| :--- | :--- | :---: | :--- |
+| **PA11** | USB_DM | In/Out | USB Data Minus (Type-C) |
+| **PA12** | USB_DP | In/Out | USB Data Plus (Type-C) |
+| **PB5** | USB_CTRL | Output | USB 1.5k D+ Pullup enable |
+| **PA15** | LED_TX | Output | TX Indicator LED |
+| **PB6** | LED_RX | Output | RX Indicator LED |
+| **PB3** | BUZZER_PWM | Output | Buzzer PWM (TIM2 CH2) |
+| **PB4** / **PB7** / **PB9** | Keys | Input | KEY_UP / KEY_ENTER / KEY_DOWN |
 
 ---
 
@@ -100,15 +111,19 @@ LoraStm32/
 │   ├── Inc/
 │   │   ├── config.h            # LoRa and Modbus configuration struct
 │   │   ├── modbus_app.h        # Modbus application API & address definitions
-│   │   ├── uart_app.h          # UART transmit and debug logging interface
+│   │   ├── uart_app.h          # Serial / USB CDC print & log interface
+│   │   ├── ssd1306.h           # SSD1306 OLED driver API
+│   │   ├── ssd1306_fonts.h     # Bitmap fonts (7x10, 11x18)
 │   │   ├── main.h              # Pin and peripheral definitions
 │   │   └── sx126x_hal_board.h  # Board-specific SX126x definitions
 │   └── Src/
 │       ├── config.c            # Flash load/save routines (JSON via cJSON)
 │       ├── modbus_app.c        # Modbus embedded backend, tables & handlers
-│       ├── uart_app.c          # UART wrapper, printf retarget, and hex printing
+│       ├── uart_app.c          # USB CDC wrapper, printf retarget, and hex printing
+│       ├── ssd1306.c           # SSD1306 I2C display driver implementation
+│       ├── ssd1306_fonts.c     # Font character bitmaps
 │       ├── sx126x_hal.c        # SX126x HAL implementation (SPI + GPIO)
-│       └── main.c              # Application entry, LoRa task & callbacks
+│       └── main.c              # Application entry, LoRa task, OLED update & callbacks
 └── Drivers/
     ├── CMSIS/                  # ARM CMSIS libraries
     ├── STM32F1xx_HAL_Driver/   # ST HAL driver

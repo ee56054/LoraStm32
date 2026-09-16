@@ -30,12 +30,14 @@
 #include <string.h>
 #include "gpio.h"
 #include "spi.h"
-// #include "usb_device.h"
+#include "i2c.h"
+#include "usb_device.h"
 #include "config.h"
 #include "sx126x.h"
 #include "sx126x_hal_board.h"
 #include "modbus_app.h"
 #include "uart_app.h"
+#include "ssd1306.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -74,6 +76,7 @@ static uint16_t rx_payload_len = 0;
 void SystemClock_Config(void);
 /* USER CODE BEGIN PFP */
 static void sx126x_transmit_packet(const uint8_t *payload, const uint8_t payload_len);
+static void update_oled_display(const char *status_msg);
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
@@ -90,13 +93,47 @@ static void TxEn(void) {
   HAL_GPIO_WritePin(LED_TX_GPIO_Port, LED_TX_Pin, GPIO_PIN_RESET);
 }
 
+static void update_oled_display(const char *status_msg) {
+  ssd1306_fill(SSD1306_COLOR_BLACK);
+
+  // Header banner
+  ssd1306_draw_filled_rectangle(0, 0, 128, 12, SSD1306_COLOR_WHITE);
+  ssd1306_set_cursor(10, 1);
+  ssd1306_write_string("LoRa STM32 Node", Font_7x10, SSD1306_COLOR_BLACK);
+
+  char buf[32];
+  // Slave ID and Tx count
+  ssd1306_set_cursor(0, 15);
+  snprintf(buf, sizeof(buf), "Slave:%u  Tx:%lu", (unsigned int)g_lora_config.slave_id, (unsigned long)tx_count);
+  ssd1306_write_string(buf, Font_7x10, SSD1306_COLOR_WHITE);
+
+  // Hardware ID
+  ssd1306_set_cursor(0, 27);
+  snprintf(buf, sizeof(buf), "HW:0x%08lX", (unsigned long)hardware_id);
+  ssd1306_write_string(buf, Font_7x10, SSD1306_COLOR_WHITE);
+
+  // Valve status
+  bool v1 = modbus_app_get_valve_state(0);
+  bool v2 = modbus_app_get_valve_state(1);
+  ssd1306_set_cursor(0, 39);
+  snprintf(buf, sizeof(buf), "V1:%-3s  V2:%-3s", v1 ? "ON" : "OFF", v2 ? "ON" : "OFF");
+  ssd1306_write_string(buf, Font_7x10, SSD1306_COLOR_WHITE);
+
+  // Status message
+  ssd1306_set_cursor(0, 51);
+  snprintf(buf, sizeof(buf), "%-18s", (status_msg != NULL) ? status_msg : "Listening...");
+  ssd1306_write_string(buf, Font_7x10, SSD1306_COLOR_WHITE);
+
+  ssd1306_update_screen();
+}
+
 static void on_valve_state_changed(uint8_t valve_idx, bool is_open) {
   uart_printf("[VALVE ACTION] Valve %u is now %s\r\n",
               valve_idx + 1, is_open ? "OPEN (ON)" : "CLOSED (OFF)");
 
-  // Ready for hardware relay/GPIO assignment if needed, for example:
-  // if (valve_idx == 0) HAL_GPIO_WritePin(GPIOB, GPIO_PIN_12, is_open ? GPIO_PIN_SET : GPIO_PIN_RESET);
-  // else if (valve_idx == 1) HAL_GPIO_WritePin(GPIOB, GPIO_PIN_13, is_open ? GPIO_PIN_SET : GPIO_PIN_RESET);
+  char status[24];
+  snprintf(status, sizeof(status), "V%u -> %s", valve_idx + 1, is_open ? "ON" : "OFF");
+  update_oled_display(status);
 }
 /* USER CODE END 0 */
 
@@ -134,6 +171,10 @@ int main(void)
   MX_USB_DEVICE_Init();
   MX_TIM2_Init();
   /* USER CODE BEGIN 2 */
+  uart_app_init();
+  ssd1306_init(&hi2c2);
+  update_oled_display("Booting...");
+
   // Initialize SX126x HAL board context
   sx126x_hal_board_init(&sx126x_board_ctx, &hspi1);
 
@@ -216,6 +257,7 @@ int main(void)
   // Start continuous receive
   RxEn();
   sx126x_set_rx(sx126x_device.context, 0); // Continuous RX
+  update_oled_display("Listening (RX)");
   /* USER CODE END 2 */
 
   /* Infinite loop */
@@ -238,10 +280,12 @@ int main(void)
       if (mb_res > 0)
       {
         tx_count++;
+        update_oled_display("Modbus Replied");
       }
       else if (mb_res == 0)
       {
         // Valid Modbus packet addressed to another slave or broadcast: do not transmit reply
+        update_oled_display("Modbus Ignored");
       }
       else
       {
@@ -262,6 +306,7 @@ int main(void)
 
         // Transmit reply packet back over LoRa (and automatically return to continuous RX)
         sx126x_transmit_packet((const uint8_t *)tx_payload, (uint8_t)pld_len);
+        update_oled_display("Text Replied");
       }
     }
     HAL_Delay(5);
