@@ -108,11 +108,13 @@ static ssize_t _modbus_embedded_send(modbus_t *ctx, const uint8_t *req, int req_
 }
 
 static int _modbus_embedded_check_integrity(modbus_t *ctx, uint8_t *msg, const int msg_length) {
+  (void)ctx;
   if (msg_length < 4) {
     return -1;
   }
   uint16_t crc_calc = modbus_crc16(msg, msg_length - 2);
   uint16_t crc_recv = msg[msg_length - 2] | (msg[msg_length - 1] << 8);
+  return (crc_calc == crc_recv) ? msg_length : -1;
   if (crc_calc != crc_recv) {
     return -1;
   }
@@ -242,6 +244,8 @@ int modbus_app_process_packet(uint8_t *rx_payload, uint16_t rx_len) {
     return -1;
   }
 
+  // Verify CRC16 frame integrity
+  if (_modbus_embedded_check_integrity(&mb_ctx, rx_payload, rx_len) <= 0) {
   // Verify CRC16 frame integrity and filter by slave ID
   int integrity = _modbus_embedded_check_integrity(&mb_ctx, rx_payload, rx_len);
   if (integrity < 0) {
