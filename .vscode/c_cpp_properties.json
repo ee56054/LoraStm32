@@ -1,8 +1,12 @@
 {
     "configurations": [
         {
-            "name": "STM32",
-            "compileCommands": "${workspaceFolder}/build/Debug/compile_commands.json"
+            "name": "STM32_CM0PLUS",
+            "compileCommands": "${workspaceFolder}/CM0PLUS/build/compile_commands.json"
+        },
+        {
+            "name": "STM32_CM4",
+            "compileCommands": "${workspaceFolder}/CM4/build/compile_commands.json"
         }
     ]
 }

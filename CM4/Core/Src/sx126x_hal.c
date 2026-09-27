@@ -62,6 +62,9 @@ static uint8_t sx126x_spi_transfer_byte(uint8_t byte)
 
 sx126x_hal_status_t sx126x_hal_board_init(sx126x_hal_board_t* ctx)
 {
+    /* 0. Enable SUBGHZSPI bus clock */
+    LL_APB3_GRP1_EnableClock(LL_APB3_GRP1_PERIPH_SUBGHZSPI);
+
     /* 1. Configure Radio reset line */
     LL_RCC_RF_DisableReset();
     uint32_t timeout = 100000;

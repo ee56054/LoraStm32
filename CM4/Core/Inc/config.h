@@ -3,7 +3,14 @@
 
 #include <stdint.h>
 #include <stdbool.h>
+#include <stddef.h>
 #include "sx126x.h"
+
+// Flash Page 63 for STM32WL54 CM4 (2KB per page: 63 * 2048 = 0x0801F800)
+#define CONFIG_FLASH_PAGE       63
+#define CONFIG_FLASH_ADDRESS    0x0801F800
+#define CONFIG_FLASH_MAGIC      0x4C524346U  // 'LRCF' (LoRa Config Flash)
+#define CONFIG_FLASH_VERSION    1U
 
 typedef struct {
     uint32_t frequency;
@@ -15,6 +22,16 @@ typedef struct {
     uint32_t rx_timeout;
     uint8_t slave_id;
 } lora_config_t;
+
+// Binary flash record structure aligned to 64-bit doubleword for STM32WL
+typedef struct __attribute__((packed, aligned(8))) {
+    uint32_t magic;           // CONFIG_FLASH_MAGIC
+    uint16_t version;         // CONFIG_FLASH_VERSION
+    uint16_t payload_len;     // sizeof(lora_config_t)
+    lora_config_t config;     // The configuration data
+    uint32_t checksum;        // Checksum over config bytes
+    uint32_t reserved;        // Padding to maintain 64-bit doubleword alignment
+} flash_storage_record_t;
 
 extern lora_config_t g_lora_config;
 
