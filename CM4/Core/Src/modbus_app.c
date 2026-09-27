@@ -3,6 +3,7 @@
 #include "modbus-private.h"
 #include "uart_app.h"
 #include "config.h"
+#include "lora_security.h"
 #include <string.h>
 
 static modbus_t mb_ctx;
@@ -158,8 +159,8 @@ void modbus_app_init(uint8_t slave_id, uint32_t hardware_id, modbus_tx_callback_
   uint8_t id = (slave_id >= 1 && slave_id <= 247) ? slave_id : 1;
   modbus_set_slave(&mb_ctx, id);
 
-  // Allocate 16 Coils, 16 Discrete Inputs, 16 Holding Registers, 16 Input Registers
-  mb_mapping = modbus_mapping_new(16, 16, 16, 16);
+  // Allocate 16 Coils, 16 Discrete Inputs, 24 Holding Registers, 16 Input Registers
+  mb_mapping = modbus_mapping_new(16, 16, 24, 16);
   if (mb_mapping != NULL) {
     // Hardware ID in Holding Registers 0 and 1
     mb_mapping->tab_registers[MODBUS_HOLD_REG_HW_ID_HI] = (uint16_t)(hardware_id >> 16);
@@ -183,6 +184,14 @@ void modbus_app_init(uint8_t slave_id, uint32_t hardware_id, modbus_tx_callback_
 
     // Slave ID in Holding Register 8
     mb_mapping->tab_registers[MODBUS_HOLD_REG_SLAVE_ID] = id;
+
+    // Security Enable in Holding Register 9
+    mb_mapping->tab_registers[MODBUS_HOLD_REG_SEC_ENABLE] = g_lora_config.security_enabled;
+
+    // Key in Holding Registers 10..17 (Write-Only: initialized to 0)
+    for (int i = 0; i < MODBUS_HOLD_REG_SEC_KEY_COUNT; i++) {
+      mb_mapping->tab_registers[MODBUS_HOLD_REG_SEC_KEY_START + i] = 0;
+    }
   }
 }
 
@@ -315,6 +324,37 @@ int modbus_app_process_packet(uint8_t *rx_payload, uint16_t rx_len) {
       } else {
         // Invalid slave ID: revert holding register to current active slave ID
         mb_mapping->tab_registers[MODBUS_HOLD_REG_SLAVE_ID] = mb_ctx.slave;
+      }
+    }
+
+    // Detect if Security Enable was modified via Holding Register 9
+    uint16_t requested_sec = mb_mapping->tab_registers[MODBUS_HOLD_REG_SEC_ENABLE];
+    if (requested_sec != g_lora_config.security_enabled) {
+      g_lora_config.security_enabled = (requested_sec != 0) ? 1 : 0;
+      mb_mapping->tab_registers[MODBUS_HOLD_REG_SEC_ENABLE] = g_lora_config.security_enabled;
+      config_save_to_flash();
+
+      uart_printf("[MODBUS] Security mode changed to %s & saved to Flash\r\n",
+                  g_lora_config.security_enabled ? "AES-128" : "Disabled");
+    }
+
+    // Detect if AES-128 key was updated via Holding Registers 10..17 (FC 16: Write Multiple Registers)
+    if (rx_payload[1] == 0x10) {
+      uint16_t reg_addr = (uint16_t)((rx_payload[2] << 8) | rx_payload[3]);
+      uint16_t reg_count = (uint16_t)((rx_payload[4] << 8) | rx_payload[5]);
+      if (reg_addr == MODBUS_HOLD_REG_SEC_KEY_START && reg_count == MODBUS_HOLD_REG_SEC_KEY_COUNT) {
+        uint8_t new_key[16];
+        for (uint8_t i = 0; i < MODBUS_HOLD_REG_SEC_KEY_COUNT; i++) {
+          uint16_t val = mb_mapping->tab_registers[MODBUS_HOLD_REG_SEC_KEY_START + i];
+          new_key[i * 2] = (uint8_t)(val >> 8);
+          new_key[i * 2 + 1] = (uint8_t)(val & 0xFF);
+          // Overwrite register back to 0 to prevent unauthorized key readback
+          mb_mapping->tab_registers[MODBUS_HOLD_REG_SEC_KEY_START + i] = 0;
+        }
+        lora_security_set_key(new_key);
+        memcpy(g_lora_config.aes_key, new_key, 16);
+        config_save_to_flash();
+        uart_printf("[MODBUS] AES-128 Key successfully updated and saved to Flash!\r\n");
       }
     }
   }

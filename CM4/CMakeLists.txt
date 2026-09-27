@@ -75,6 +75,7 @@ target_sources(${CMAKE_PROJECT_NAME} PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/Core/Src/ssd1306_fonts.c
     ${CMAKE_CURRENT_SOURCE_DIR}/Core/Src/uart_app.c
     ${CMAKE_CURRENT_SOURCE_DIR}/Core/Src/config.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/Core/Src/lora_security.c
 )
 
 # Link directories setup

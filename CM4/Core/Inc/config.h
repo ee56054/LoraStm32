@@ -10,7 +10,7 @@
 #define CONFIG_FLASH_PAGE       63
 #define CONFIG_FLASH_ADDRESS    0x0801F800
 #define CONFIG_FLASH_MAGIC      0x4C524346U  // 'LRCF' (LoRa Config Flash)
-#define CONFIG_FLASH_VERSION    1U
+#define CONFIG_FLASH_VERSION    2U
 
 typedef struct {
     uint32_t frequency;
@@ -21,6 +21,8 @@ typedef struct {
     uint16_t preamble_length;
     uint32_t rx_timeout;
     uint8_t slave_id;
+    uint8_t security_enabled; // 0 = Plaintext, 1 = AES-128 Encryption Enabled
+    uint8_t aes_key[16];      // 128-bit pre-shared AES encryption key
 } lora_config_t;
 
 // Binary flash record structure aligned to 64-bit doubleword for STM32WL

@@ -21,6 +21,7 @@
 #include "modbus_app.h"
 #include "uart_app.h"
 #include "ssd1306.h"
+#include "lora_security.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -87,11 +88,13 @@ static void update_oled_display(const char *status_msg) {
   snprintf(buf, sizeof(buf), "HW:0x%08lX", (unsigned long)hardware_id);
   ssd1306_write_string(buf, Font_7x10, SSD1306_COLOR_WHITE);
 
-  // Valve status
+  // Valve status and Security state
   bool v1 = modbus_app_get_valve_state(0);
   bool v2 = modbus_app_get_valve_state(1);
   ssd1306_set_cursor(0, 39);
-  snprintf(buf, sizeof(buf), "V1:%-3s  V2:%-3s", v1 ? "ON" : "OFF", v2 ? "ON" : "OFF");
+  snprintf(buf, sizeof(buf), "V1:%-3s V2:%-3s %s",
+           v1 ? "ON" : "OFF", v2 ? "ON" : "OFF",
+           g_lora_config.security_enabled ? "SEC" : "RAW");
   ssd1306_write_string(buf, Font_7x10, SSD1306_COLOR_WHITE);
 
   // Status message
@@ -170,6 +173,19 @@ void sx126x_radio_irq_callback(void) {
 
 static void sx126x_transmit_packet(const uint8_t *payload,
                                    const uint8_t payload_len) {
+  const uint8_t *tx_data = payload;
+  uint8_t tx_len = payload_len;
+  uint8_t sec_buf[256];
+  uint16_t sec_len = 0;
+
+  if (g_lora_config.security_enabled) {
+    if (lora_security_encrypt(payload, payload_len, sec_buf, &sec_len)) {
+      tx_data = sec_buf;
+      tx_len = (uint8_t)sec_len;
+      uart_printf("[SECURITY] Encrypted TX frame (%u -> %u bytes)\r\n", payload_len, tx_len);
+    }
+  }
+
   // Force radio to standby before changing buffer/state
   sx126x_set_standby(sx126x_device.context, SX126X_STANDBY_CFG_RC);
 
@@ -181,13 +197,13 @@ static void sx126x_transmit_packet(const uint8_t *payload,
   sx126x_pkt_params_lora_t tx_pkt_params = {
       .preamble_len_in_symb = g_lora_config.preamble_length,
       .header_type = SX126X_LORA_PKT_EXPLICIT,
-      .pld_len_in_bytes = payload_len,
+      .pld_len_in_bytes = tx_len,
       .crc_is_on = false,
       .invert_iq_is_on = false};
   sx126x_set_lora_pkt_params(sx126x_device.context, &tx_pkt_params);
 
   // Write payload into TX buffer
-  sx126x_write_buffer(sx126x_device.context, 0x00, payload, payload_len);
+  sx126x_write_buffer(sx126x_device.context, 0x00, tx_data, tx_len);
 
   // Enable RF switch for TX and start transmission
   sx126x_hal_rf_switch_tx();
@@ -272,6 +288,11 @@ int main(void)
   // Initialize configuration from flash or use defaults
   config_init();
 
+  // Initialize LoRa Security (AES-128 Payload Encryption)
+  lora_security_init(g_lora_config.aes_key);
+  uart_printf("LoRa Security (AES-128): %s\r\n",
+              g_lora_config.security_enabled ? "ENABLED" : "DISABLED");
+
   // Set RF frequency
   sx126x_set_rf_freq(sx126x_device.context, g_lora_config.frequency);
 
@@ -338,11 +359,37 @@ int main(void)
     {
       rx_packet_received = false;
 
+      uint8_t plain_buf[256];
+      uint16_t plain_len = 0;
+      const uint8_t *proc_buf = rx_payload_buf;
+      uint16_t proc_len = rx_payload_len;
+
+      if (lora_security_is_encrypted(rx_payload_buf, rx_payload_len))
+      {
+        if (lora_security_decrypt(rx_payload_buf, rx_payload_len, plain_buf, &plain_len))
+        {
+          proc_buf = plain_buf;
+          proc_len = plain_len;
+          uart_printf("[SECURITY] Decrypted %u bytes (MIC verified)\r\n", plain_len);
+          uart_print_hex("DECRYPTED: ", proc_buf, proc_len);
+        }
+        else
+        {
+          uart_printf("[SECURITY] Decryption FAILED (corrupted packet or invalid key)\r\n");
+          update_oled_display("SEC Auth Fail");
+          continue;
+        }
+      }
+      else if (g_lora_config.security_enabled)
+      {
+        uart_printf("[SECURITY] Warning: Plaintext packet received while security is enabled\r\n");
+      }
+
       // Update runtime telemetry in Modbus holding registers
       modbus_app_update_telemetry(tx_count);
 
       // Process received packet via Modbus handler
-      int mb_res = modbus_app_process_packet(rx_payload_buf, rx_payload_len);
+      int mb_res = modbus_app_process_packet((uint8_t *)proc_buf, proc_len);
       if (mb_res > 0)
       {
         tx_count++;
@@ -356,15 +403,15 @@ int main(void)
       else
       {
         // Fallback for non-Modbus message: text reply
-        while (rx_payload_len > 0 && (rx_payload_buf[rx_payload_len - 1] == '\r' || rx_payload_buf[rx_payload_len - 1] == '\n'))
+        while (proc_len > 0 && (proc_buf[proc_len - 1] == '\r' || proc_buf[proc_len - 1] == '\n'))
         {
-          rx_payload_len--;
+          proc_len--;
         }
 
         tx_count++;
         int pld_len = snprintf(tx_payload, sizeof(tx_payload), "REPLY [HW_ID: 0x%08lX | Count: %lu] -> %.*s\r\n",
                                (unsigned long)hardware_id, (unsigned long)tx_count,
-                               (int)rx_payload_len, rx_payload_buf);
+                               (int)proc_len, proc_buf);
 
         uart_send((const uint8_t *)tx_payload, pld_len);
         sx126x_transmit_packet((const uint8_t *)tx_payload, (uint8_t)pld_len);

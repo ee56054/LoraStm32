@@ -67,6 +67,8 @@ An embedded firmware project for **STM32WL54CCU7 / STM32WL55** that implements a
 | `0x0006` (6) | **Sensor 1 Register**| RO | `03` | Mirrored Sensor 1 (Default: `0`) |
 | `0x0007` (7) | **Sensor 2 Register**| RO | `03` | Mirrored Sensor 2 (Default: `0`) |
 | `0x0008` (8) | **Slave ID** | RW | `03`, `06`, `16` | **Modbus Slave Address (1..247)**; writing updates ID and persists to Flash |
+| `0x0009` (9) | **Security Enable** | RW | `03`, `06`, `16` | **Payload Encryption (0 = Raw Plaintext, 1 = AES-128)**; persists to Flash |
+| `0x000A`–`0x0011` (10–17) | **AES-128 Key** | WO | `16` | **128-bit Encryption Key (8 registers / 16 bytes)**; Write-only (returns 0 on read for security); updates active key and persists to Flash |
 
 ---
 
@@ -109,6 +111,7 @@ LoraStm32/
 │   └── Core/
 │       ├── Inc/
 │       │   ├── config.h        # Binary Flash storage definitions (Magic 0x4C524346)
+│       │   ├── lora_security.h # AES-128 payload encryption & authentication API
 │       │   ├── modbus_app.h    # Modbus RTU slave API & table addresses
 │       │   ├── ssd1306.h       # SSD1306 OLED I2C driver
 │       │   ├── ssd1306_fonts.h # Font tables (7x10, 11x18)
@@ -117,6 +120,7 @@ LoraStm32/
 │       │   └── main.h          # Hardware defines and prototypes
 │       └── Src/
 │           ├── config.c        # Direct 64-bit doubleword Flash load/save
+│           ├── lora_security.c # AES-128-CTR stream cipher & MIC verification
 │           ├── main.c          # Application main loop, LoRa task & display
 │           ├── modbus_app.c    # Modbus RTU protocol engine & CRC16 table
 │           ├── ssd1306.c       # OLED display implementation
@@ -136,6 +140,27 @@ LoraStm32/
     ├── sx126x_driver/          # Semtech SX126x radio driver
     └── libmodbus/              # Bare-metal embedded libmodbus library
 ```
+
+---
+
+## LoRa Payload Security (SSL / AES-128-CTR)
+
+When payload security is enabled (`security_enabled = 1`), all Modbus RTU frames and replies transmitted over LoRa are encrypted and authenticated using **AES-128-CTR**:
+
+### Secure Frame Layout
+```
++---------------+------------------+-----------------------------+-------------------+
+| Magic (1B)    | Nonce / IV (4B)  | Encrypted Ciphertext (N B)  | MIC / Auth (2B)   |
+| 0x53 ('S')    | 32-bit counter   | Modbus RTU Frame (AES-CTR)  | CRC16 on Payload  |
++---------------+------------------+-----------------------------+-------------------+
+```
+
+- **Zero Payload Expansion**: AES in Counter mode (CTR) produces ciphertext of the exact same length as plaintext, avoiding LoRa airtime and duty cycle bloat.
+- **Anti-Replay Protection**: Each packet uses an incrementing 32-bit transmission Nonce seed.
+- **Message Integrity Code (MIC)**: Ensures received packets are authentic and immediately discards tampered packets or packets with an invalid key before reaching the Modbus engine.
+- **Dynamic Configuration**: Can be enabled or disabled at runtime via **Modbus Holding Register 9** and persists across reboots in Flash Page 63.
+- **Key Updating via Modbus**: A new 16-byte key can be provisioned at runtime by writing to **Holding Registers 10–17** using Function Code 16 (`0x10`). The registers are write-only to prevent unauthorized reading over the air.
+- **Compile-Time Default Key**: Defined in [`CM4/Core/Src/config.c`](CM4/Core/Src/config.c) in `default_key[16]`.
 
 ---
 

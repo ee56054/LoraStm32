@@ -22,6 +22,12 @@ void config_init(void) {
     g_lora_config.preamble_length = 8;
     g_lora_config.rx_timeout = 0;
     g_lora_config.slave_id = 1;
+    g_lora_config.security_enabled = 1;
+    static const uint8_t default_key[16] = {
+        0x2B, 0x7E, 0x15, 0x16, 0x28, 0xAE, 0xD2, 0xA6,
+        0xAB, 0xF7, 0x15, 0x88, 0x09, 0xCF, 0x4F, 0x3C
+    };
+    memcpy(g_lora_config.aes_key, default_key, 16);
 
     // 2. Load persistent config from Flash if valid
     config_load_from_flash();

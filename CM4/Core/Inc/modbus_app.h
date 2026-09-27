@@ -28,6 +28,9 @@ extern "C" {
 #define MODBUS_HOLD_REG_SENSOR_1         6
 #define MODBUS_HOLD_REG_SENSOR_2         7
 #define MODBUS_HOLD_REG_SLAVE_ID         8
+#define MODBUS_HOLD_REG_SEC_ENABLE       9
+#define MODBUS_HOLD_REG_SEC_KEY_START    10
+#define MODBUS_HOLD_REG_SEC_KEY_COUNT    8  /* 8 registers = 16 bytes for AES-128 key */
 
 /* Transmit callback type (e.g. transmit packet over LoRa) */
 typedef void (*modbus_tx_callback_t)(const uint8_t *payload, uint8_t payload_len);
