@@ -22,6 +22,8 @@
 #include "uart_app.h"
 #include "ssd1306.h"
 #include "lora_security.h"
+#include "ec11.h"
+#include "menu.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -70,39 +72,7 @@ static void on_valve_state_changed(uint8_t valve_idx, bool is_open);
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
 static void update_oled_display(const char *status_msg) {
-  ssd1306_fill(SSD1306_COLOR_BLACK);
-
-  // Header banner
-  ssd1306_draw_filled_rectangle(0, 0, 128, 12, SSD1306_COLOR_WHITE);
-  ssd1306_set_cursor(6, 1);
-  ssd1306_write_string("STM32WL LoRa SoC", Font_7x10, SSD1306_COLOR_BLACK);
-
-  char buf[32];
-  // Slave ID and Tx count
-  ssd1306_set_cursor(0, 15);
-  snprintf(buf, sizeof(buf), "Slave:%u  Tx:%lu", (unsigned int)g_lora_config.slave_id, (unsigned long)tx_count);
-  ssd1306_write_string(buf, Font_7x10, SSD1306_COLOR_WHITE);
-
-  // Hardware ID
-  ssd1306_set_cursor(0, 27);
-  snprintf(buf, sizeof(buf), "HW:0x%08lX", (unsigned long)hardware_id);
-  ssd1306_write_string(buf, Font_7x10, SSD1306_COLOR_WHITE);
-
-  // Valve status and Security state
-  bool v1 = modbus_app_get_valve_state(0);
-  bool v2 = modbus_app_get_valve_state(1);
-  ssd1306_set_cursor(0, 39);
-  snprintf(buf, sizeof(buf), "V1:%-3s V2:%-3s %s",
-           v1 ? "ON" : "OFF", v2 ? "ON" : "OFF",
-           g_lora_config.security_enabled ? "SEC" : "RAW");
-  ssd1306_write_string(buf, Font_7x10, SSD1306_COLOR_WHITE);
-
-  // Status message
-  ssd1306_set_cursor(0, 51);
-  snprintf(buf, sizeof(buf), "%-18s", (status_msg != NULL) ? status_msg : "Listening...");
-  ssd1306_write_string(buf, Font_7x10, SSD1306_COLOR_WHITE);
-
-  ssd1306_update_screen();
+  menu_update_status(status_msg, tx_count);
 }
 
 static void on_valve_state_changed(uint8_t valve_idx, bool is_open) {
@@ -111,7 +81,67 @@ static void on_valve_state_changed(uint8_t valve_idx, bool is_open) {
 
   char status[24];
   snprintf(status, sizeof(status), "V%u -> %s", valve_idx + 1, is_open ? "ON" : "OFF");
-  update_oled_display(status);
+  menu_update_status(status, tx_count);
+}
+
+static void poll_xkc_sensors(bool force_update) {
+  static uint16_t prev_s1 = 0xFFFF;
+  static uint16_t prev_s2 = 0xFFFF;
+
+  /* Optocoupler output pulls PB3 / PB4 LOW when XKC-Y26 detects liquid */
+  uint16_t s1 = (HAL_GPIO_ReadPin(XKC_SENSOR1_PORT, XKC_SENSOR1_PIN) == GPIO_PIN_RESET) ? 1U : 0U;
+  uint16_t s2 = (HAL_GPIO_ReadPin(XKC_SENSOR2_PORT, XKC_SENSOR2_PIN) == GPIO_PIN_RESET) ? 1U : 0U;
+
+  if (force_update || s1 != prev_s1 || s2 != prev_s2) {
+    modbus_app_set_sensor_values(s1, s2);
+    if (!force_update) {
+      uart_printf("[XKC-Y26] Sensor1(PB3)=%u | Sensor2(PB4)=%u\r\n",
+                  (unsigned int)s1, (unsigned int)s2);
+      char status[24];
+      snprintf(status, sizeof(status), "S1:%u S2:%u", (unsigned int)s1, (unsigned int)s2);
+      menu_update_status(status, tx_count);
+    }
+    prev_s1 = s1;
+    prev_s2 = s2;
+  }
+}
+
+void radio_reconfigure(void) {
+  if (sx126x_device.context == NULL) return;
+
+  // Set RF frequency
+  sx126x_set_rf_freq(sx126x_device.context, g_lora_config.frequency);
+
+  // Set modulation parameters for LoRa
+  sx126x_mod_params_lora_t mod_params = {
+      .sf = g_lora_config.spreading_factor,
+      .bw = g_lora_config.bandwidth,
+      .cr = g_lora_config.coding_rate,
+      .ldro = (g_lora_config.spreading_factor >= SX126X_LORA_SF11 && g_lora_config.bandwidth == SX126X_LORA_BW_125) ? 1 : 0
+  };
+  sx126x_set_lora_mod_params(sx126x_device.context, &mod_params);
+
+  // Set packet parameters for LoRa
+  sx126x_pkt_params_lora_t pkt_params = {
+      .preamble_len_in_symb = g_lora_config.preamble_length,
+      .header_type = SX126X_LORA_PKT_EXPLICIT,
+      .pld_len_in_bytes = 255,
+      .crc_is_on = false,
+      .invert_iq_is_on = false
+  };
+  sx126x_set_lora_pkt_params(sx126x_device.context, &pkt_params);
+
+  // Set TX parameters
+  sx126x_set_tx_params(sx126x_device.context, g_lora_config.tx_power, SX126X_RAMP_3400_US);
+
+  // Return to continuous RX
+  sx126x_hal_rf_switch_rx();
+  sx126x_set_rx(sx126x_device.context, 0);
+
+  uart_printf("[RADIO] Applied config: Freq=%lu Hz, SF=%d, Power=%d dBm\r\n",
+              (unsigned long)g_lora_config.frequency,
+              (int)g_lora_config.spreading_factor,
+              (int)g_lora_config.tx_power);
 }
 
 void sx126x_radio_irq_callback(void) {
@@ -248,6 +278,7 @@ int main(void)
   /* USER CODE BEGIN 2 */
   uart_app_init(&huart2);
   ssd1306_init(&hi2c2);
+  ec11_init();
   update_oled_display("Booting...");
 
   // Initialize SX126x HAL board context for STM32WL SUBGHZ
@@ -293,31 +324,8 @@ int main(void)
   uart_printf("LoRa Security (AES-128): %s\r\n",
               g_lora_config.security_enabled ? "ENABLED" : "DISABLED");
 
-  // Set RF frequency
-  sx126x_set_rf_freq(sx126x_device.context, g_lora_config.frequency);
-
-  // Set modulation parameters for LoRa
-  sx126x_mod_params_lora_t mod_params = {
-      .sf = g_lora_config.spreading_factor,
-      .bw = g_lora_config.bandwidth,
-      .cr = g_lora_config.coding_rate,
-      .ldro = 0
-  };
-  sx126x_set_lora_mod_params(sx126x_device.context, &mod_params);
-
-  // Set packet parameters for LoRa
-  sx126x_pkt_params_lora_t pkt_params = {
-      .preamble_len_in_symb = g_lora_config.preamble_length,
-      .header_type = SX126X_LORA_PKT_EXPLICIT,
-      .pld_len_in_bytes = 255,
-      .crc_is_on = false,
-      .invert_iq_is_on = false
-  };
-  sx126x_set_lora_pkt_params(sx126x_device.context, &pkt_params);
-
-  // Set TX parameters
-  sx126x_set_tx_params(sx126x_device.context, g_lora_config.tx_power,
-                       SX126X_RAMP_3400_US);
+  // Configure and start radio with active parameters
+  radio_reconfigure();
 
   // Generate hardware ID from internal RNG / UID
   sx126x_get_random_numbers(sx126x_device.context, &hardware_id, 1);
@@ -329,10 +337,10 @@ int main(void)
   modbus_app_init(g_lora_config.slave_id, hardware_id, sx126x_transmit_packet);
   modbus_app_set_valve_callback(on_valve_state_changed);
 
-  // Default status of valves are 0 (Closed) and sensors are 0
+  // Default status of valves are 0 (Closed) and sample initial XKC-Y26 sensor states
   modbus_app_set_valve_state(0, false);
   modbus_app_set_valve_state(1, false);
-  modbus_app_set_sensor_values(0, 0);
+  poll_xkc_sensors(true);
 
   // Transmit hardware ID and Modbus Slave ID over UART
   uart_printf("STM32WL LoRa SoC Init - Hardware ID: 0x%08lX | Modbus Slave ID: %u\r\n",
@@ -344,6 +352,7 @@ int main(void)
   // Start continuous receive
   sx126x_hal_rf_switch_rx();
   sx126x_set_rx(sx126x_device.context, 0); // Continuous RX
+  menu_init(hardware_id);
   update_oled_display("Listening (RX)");
   /* USER CODE END 2 */
 
@@ -355,6 +364,11 @@ int main(void)
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
+    // Poll EC11 rotary encoder, XKC-Y26 liquid sensors (PB3/PB4) & update OLED menu
+    ec11_event_t enc_evt = ec11_update();
+    poll_xkc_sensors(false);
+    menu_process(enc_evt);
+
     if (rx_packet_received)
     {
       rx_packet_received = false;
@@ -512,9 +526,17 @@ static void MX_I2C2_Init(void)
 
 static void MX_GPIO_Init(void)
 {
+  GPIO_InitTypeDef GPIO_InitStruct = {0};
+
   __HAL_RCC_GPIOA_CLK_ENABLE();
   __HAL_RCC_GPIOB_CLK_ENABLE();
   __HAL_RCC_GPIOC_CLK_ENABLE();
+
+  /* Configure XKC-Y26 optocoupler sensor inputs on PB3 and PB4 with internal pull-up */
+  GPIO_InitStruct.Pin = XKC_SENSOR1_PIN | XKC_SENSOR2_PIN;
+  GPIO_InitStruct.Mode = GPIO_MODE_INPUT;
+  GPIO_InitStruct.Pull = GPIO_PULLUP;
+  HAL_GPIO_Init(GPIOB, &GPIO_InitStruct);
 }
 
 /**

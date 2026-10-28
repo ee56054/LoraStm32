@@ -1,0 +1,18 @@
+{
+    "configurations": [
+        {
+            "name": "debug",
+            "type": "stlinkgdbtarget",
+            "request": "launch",
+            "cwd": "${workspaceFolder}",
+            "preBuild": "${command:st-stm32-ide-debug-launch.build}",
+            "runEntry": "main",
+            "imagesAndSymbols": [
+                {
+                    "imageFileName": "${workspaceFolder}/CM4/build/Lora_CM4.elf"
+                }
+            ],
+            "verbose": false
+        }
+    ]
+}

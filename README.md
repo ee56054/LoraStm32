@@ -91,8 +91,60 @@ All radio communication is routed internally inside the STM32WL package:
 | :--- | :--- | :--- | :--- |
 | **PA2** | USART2 | TX | UART Debug Logger (115200 8N1) |
 | **PA3** | USART2 | RX | UART RX |
-| **PA11** | I2C2 | SDA | SSD1306 0.96" OLED Display Data |
-| **PA12** | I2C2 | SCL | SSD1306 0.96" OLED Display Clock |
+| **PA11** | I2C2 | SDA | SSD1306 / SH1106 OLED Data |
+| **PA12** | I2C2 | SCL | SSD1306 / SH1106 OLED Clock |
+| **PA5** | GPIO (Pull-Up) | Input | EC11 Encoder Phase A (CLK) |
+| **PA6** | GPIO (Pull-Up) | Input | EC11 Encoder Phase B (DT) |
+| **PA7** | GPIO (Pull-Up) | Input | **CONFIRM Button** (EC11 Knob Push / Select / Save) |
+| **PA9** | GPIO (Pull-Up) | Input | **BACK Button** (Cancel / Return to Previous Menu or Dashboard) |
+
+---
+
+## EC11 Interactive On-Screen Menu
+
+The node features an interactive UI on the SSD1306/SH1106 OLED display using the EC11 rotary knob and dedicated navigation buttons (`PA5`, `PA6`, `PA7`, `PA9`):
+
+### Navigation & Control
+- **Rotate Knob (`PA5` / `PA6`)**:
+  - Status Dashboard & Node Info: Scroll status lines smoothly (1 value per line).
+  - Menus: Move cursor `>` up and down across options.
+  - Edit Mode: Adjust parameter values.
+- **Confirm Button (`PA7`)**:
+  - Status Dashboard: Enter Main Menu.
+  - Main Menu: Select highlighted item / enter submenu.
+  - Edit Mode: Save modifications immediately to hardware and commit to **Flash Page 63**.
+  - Hex Byte Editor: Click advances to next byte; Hold (> 800ms) commits full 16-byte key.
+- **Back Button (`PA9`)**:
+  - **Exclusively controls all "Go Back" navigation**:
+    - From Submenus (*LoRa Config*, *Sec Key*, *Node Info*): Return to Main Menu.
+    - From Main Menu: Return to live Status Dashboard.
+    - From Info / Key View screens: Return to parent menu.
+    - From Edit Modes: Cancel and discard modifications without saving.
+
+### Menu Structure
+```
+[ Status Dashboard ] (Live RX/TX, valves, telemetry)
+       |
+       +---> [ Main Menu ] (Press PA9 to return to Dashboard)
+                ├── Valve 1: [OPEN / CLOSED]
+                ├── Valve 2: [OPEN / CLOSED]
+                ├── Sec: [AES-128 / RAW]
+                ├── Sec Key > (Press PA9 to return to Main Menu)
+                │      ├── View Key (Displays 32-digit Hex key; PA9 to exit)
+                │      ├── Key Presets > (Factory, Test 00..0F, A5..5A, All 01)
+                │      ├── Edit Bytes... (Byte-by-byte hex editor)
+                │      ├── Gen Random Key (Hardware TRNG key generator)
+                │      └── Reset Default (Restores factory default key)
+                ├── Slave ID: [1..247]
+                ├── LoRa Config > (Press PA9 to return to Main Menu)
+                │      ├── Frequency: [433.0, 868.0, 915.0, 920.0, 923.0, 925.0 MHz]
+                │      ├── Spreading Factor: [SF7, SF8, SF9, SF10, SF11, SF12]
+                │      ├── TX Power: [10, 14, 17, 20, 22 dBm]
+                │      ├── Bandwidth: [125, 250, 500 kHz]
+                │      └── Coding Rate: [4/5, 4/6, 4/7, 4/8]
+                ├── OLED Type: [0.96" SSD1306 / 1.3" SH1106]
+                └── Node Info... (Hardware & radio overview; PA9 to exit)
+```
 
 ---
 

@@ -6,6 +6,11 @@
 
 static I2C_HandleTypeDef *g_hi2c = NULL;
 static uint8_t g_i2c_addr = SSD1306_I2C_ADDR;
+static bool g_is_sh1106 = false;
+
+void ssd1306_set_sh1106_mode(bool is_sh1106) {
+    g_is_sh1106 = is_sh1106;
+}
 
 // Screen buffer: 128x64 pixels = 1024 bytes
 static uint8_t SSD1306_Buffer[SSD1306_BUFFER_SIZE];
@@ -83,9 +88,11 @@ void ssd1306_fill(SSD1306_COLOR_t color) {
 void ssd1306_update_screen(void) {
     if (g_hi2c == NULL) return;
 
+    uint8_t col_low = g_is_sh1106 ? 0x02 : 0x00;
+
     for (uint8_t m = 0; m < 8; m++) {
         ssd1306_write_command(0xB0 + m);
-        ssd1306_write_command(0x00);
+        ssd1306_write_command(col_low);
         ssd1306_write_command(0x10);
 
         HAL_I2C_Mem_Write(g_hi2c, g_i2c_addr, 0x40, 1,

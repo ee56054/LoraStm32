@@ -1,2 +1,16 @@
 CompileFlags:
   CompilationDatabase: build/Debug
+
+---
+
+CompileFlags:
+  CompilationDatabase: CM0PLUS/build
+If:
+  PathMatch: CM0PLUS/.*
+
+---
+
+CompileFlags:
+  CompilationDatabase: CM4/build
+If:
+  PathMatch: CM4/.*

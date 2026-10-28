@@ -53,13 +53,26 @@ extern "C" {
 void Error_Handler(void);
 
 /* USER CODE BEGIN EFP */
-
+void radio_reconfigure(void);
 /* USER CODE END EFP */
 
 /* Private defines -----------------------------------------------------------*/
 
 /* USER CODE BEGIN Private defines */
+#define EC11_A_PIN              GPIO_PIN_5
+#define EC11_A_PORT             GPIOA
+#define EC11_B_PIN              GPIO_PIN_6
+#define EC11_B_PORT             GPIOA
+#define EC11_CONFIRM_PIN        GPIO_PIN_7
+#define EC11_CONFIRM_PORT       GPIOA
+#define EC11_BACK_PIN           GPIO_PIN_9
+#define EC11_BACK_PORT          GPIOA
 
+/* XKC-Y26 Non-Contact Liquid Level Sensors (Optocoupler-Isolated Active-Low Inputs) */
+#define XKC_SENSOR1_PIN         GPIO_PIN_3
+#define XKC_SENSOR1_PORT        GPIOB
+#define XKC_SENSOR2_PIN         GPIO_PIN_4
+#define XKC_SENSOR2_PORT        GPIOB
 /* USER CODE END Private defines */
 
 #ifdef __cplusplus

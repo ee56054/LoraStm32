@@ -45,6 +45,12 @@ typedef struct {
 uint8_t ssd1306_init(I2C_HandleTypeDef *hi2c);
 
 /**
+ * @brief Select between 0.96" SSD1306 (col offset 0) and 1.3" SH1106 (col offset 2)
+ * @param is_sh1106 true for 1.3" SH1106, false for 0.96" SSD1306
+ */
+void ssd1306_set_sh1106_mode(bool is_sh1106);
+
+/**
  * @brief Fill entire screen buffer with specified color
  * @param color SSD1306_COLOR_BLACK or SSD1306_COLOR_WHITE
  */

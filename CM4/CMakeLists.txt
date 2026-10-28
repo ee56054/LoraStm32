@@ -76,6 +76,8 @@ target_sources(${CMAKE_PROJECT_NAME} PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/Core/Src/uart_app.c
     ${CMAKE_CURRENT_SOURCE_DIR}/Core/Src/config.c
     ${CMAKE_CURRENT_SOURCE_DIR}/Core/Src/lora_security.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/Core/Src/ec11.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/Core/Src/menu.c
 )
 
 # Link directories setup
