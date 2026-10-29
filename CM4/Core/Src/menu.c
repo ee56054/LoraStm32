@@ -8,6 +8,7 @@
 #include <string.h>
 
 #define MENU_TIMEOUT_MS         12000
+#define DISPLAY_SLEEP_TIMEOUT_MS 60000U
 
 // Main Menu Items (Exiting to Dashboard is handled strictly by PA9 Back button)
 typedef enum {
@@ -99,6 +100,7 @@ static uint32_t s_hw_id = 0;
 static uint32_t s_tx_count = 0;
 static char s_status_msg[32] = "Listening...";
 static uint32_t s_last_action_tick = 0;
+static bool s_display_off = false;
 
 static int8_t s_cursor_idx = 0;
 static int8_t s_scroll_top = 0;
@@ -142,6 +144,7 @@ void menu_init(uint32_t hw_id) {
     s_mode = UI_MODE_DASHBOARD;
     s_dash_scroll_top = 0;
     s_info_scroll_top = 0;
+    s_display_off = false;
     s_last_action_tick = HAL_GetTick();
     render_dashboard();
 }
@@ -153,7 +156,7 @@ void menu_update_status(const char *status_msg, uint32_t tx_count) {
         s_status_msg[sizeof(s_status_msg) - 1] = '\0';
     }
 
-    if (s_mode == UI_MODE_DASHBOARD) {
+    if (!s_display_off && s_mode == UI_MODE_DASHBOARD) {
         render_dashboard();
     }
 }
@@ -572,11 +575,53 @@ static void render_info(void) {
     ssd1306_update_screen();
 }
 
+static void render_current_screen(void) {
+    switch (s_mode) {
+        case UI_MODE_DASHBOARD:
+            render_dashboard();
+            break;
+        case UI_MODE_MAIN_MENU:
+            render_main_menu();
+            break;
+        case UI_MODE_LORA_MENU:
+            render_lora_menu();
+            break;
+        case UI_MODE_KEY_MENU:
+        case UI_MODE_KEY_EDIT_BYTE:
+            render_key_menu();
+            break;
+        case UI_MODE_EDIT_MAIN:
+            render_edit_main();
+            break;
+        case UI_MODE_EDIT_LORA:
+            render_edit_lora();
+            break;
+        case UI_MODE_INFO:
+            render_info();
+            break;
+        default:
+            render_dashboard();
+            break;
+    }
+}
+
 void menu_process(ec11_event_t event) {
     uint32_t now = HAL_GetTick();
 
     if (event != EC11_EVENT_NONE) {
         s_last_action_tick = now;
+        if (s_display_off) {
+            s_display_off = false;
+            ssd1306_set_display_on(true);
+            render_current_screen();
+            return;
+        }
+    } else {
+        if (!s_display_off && (now - s_last_action_tick >= DISPLAY_SLEEP_TIMEOUT_MS)) {
+            s_display_off = true;
+            ssd1306_set_display_on(false);
+        }
+        return;
     }
 
     // Auto-return to dashboard on timeout is disabled: going back is handled strictly by PA9 Back button

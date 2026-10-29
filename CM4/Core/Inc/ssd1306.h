@@ -62,6 +62,12 @@ void ssd1306_fill(SSD1306_COLOR_t color);
 void ssd1306_update_screen(void);
 
 /**
+ * @brief Turn the OLED display panel ON or OFF (sleep mode)
+ * @param on true to turn display ON, false to turn display OFF (closed)
+ */
+void ssd1306_set_display_on(bool on);
+
+/**
  * @brief Draw a single pixel in the screen buffer
  * @param x X coordinate (0..127)
  * @param y Y coordinate (0..63)

@@ -85,12 +85,30 @@ void ssd1306_fill(SSD1306_COLOR_t color) {
     memset(SSD1306_Buffer, (color == SSD1306_COLOR_BLACK) ? 0x00 : 0xFF, sizeof(SSD1306_Buffer));
 }
 
+void ssd1306_set_display_on(bool on) {
+    if (g_hi2c == NULL) return;
+
+    if (on) {
+        ssd1306_write_command(0x8D); // Set DC-DC enable
+        ssd1306_write_command(0x14); // Enable Charge Pump
+        ssd1306_write_command(0xA4); // Output follows RAM content
+        ssd1306_write_command(0xA6); // Normal display
+        ssd1306_write_command(0xAF); // Display ON
+    } else {
+        ssd1306_write_command(0xAE); // Display OFF (sleep mode)
+        ssd1306_write_command(0x8D); // Set DC-DC enable
+        ssd1306_write_command(0x10); // Disable Charge Pump
+    }
+}
+
 void ssd1306_update_screen(void) {
     if (g_hi2c == NULL) return;
 
     uint8_t col_low = g_is_sh1106 ? 0x02 : 0x00;
 
     // Ensure display remains active and normal-mode before flushing pages
+    ssd1306_write_command(0x8D); // Set DC-DC enable
+    ssd1306_write_command(0x14); // Enable Charge Pump
     ssd1306_write_command(0xA4); // Output follows RAM content
     ssd1306_write_command(0xA6); // Normal display (not inverted)
     ssd1306_write_command(0xAF); // Display ON
