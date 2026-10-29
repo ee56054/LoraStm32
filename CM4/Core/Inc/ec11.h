@@ -57,8 +57,15 @@ typedef enum {
 void ec11_init(void);
 
 /**
+ * @brief Fast 1ms quadrature sampler (safe to call from SysTick_Handler ISR)
+ * Captures every Gray-code state transition so fast turns or I2C screen
+ * updates never miss or double-count a detent click.
+ */
+void ec11_tick_1ms(void);
+
+/**
  * @brief Scan the EC11 encoder and return pending events
- * Call periodically (e.g. every 5-10ms in main loop)
+ * Call periodically in main loop
  * @return Detected event (EC11_EVENT_NONE if no action)
  */
 ec11_event_t ec11_update(void);

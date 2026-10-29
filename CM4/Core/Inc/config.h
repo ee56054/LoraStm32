@@ -38,6 +38,7 @@ typedef struct __attribute__((packed, aligned(8))) {
 extern lora_config_t g_lora_config;
 
 void config_init(void);
+void config_reset_default_key(void);
 bool config_load_from_flash(void);
 bool config_save_to_flash(void);
 

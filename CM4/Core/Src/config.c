@@ -12,6 +12,15 @@ static uint32_t calculate_checksum(const uint8_t *data, size_t len) {
     return crc;
 }
 
+static const uint8_t s_default_aes_key[16] = {
+    0x2B, 0x7E, 0x15, 0x16, 0x28, 0xAE, 0xD2, 0xA6,
+    0xAB, 0xF7, 0x15, 0x88, 0x09, 0xCF, 0x4F, 0x3C
+};
+
+void config_reset_default_key(void) {
+    memcpy(g_lora_config.aes_key, s_default_aes_key, 16);
+}
+
 void config_init(void) {
     // 1. Factory defaults for STM32WL LoRa node
     g_lora_config.frequency = 915000000;
@@ -23,11 +32,7 @@ void config_init(void) {
     g_lora_config.rx_timeout = 0;
     g_lora_config.slave_id = 1;
     g_lora_config.security_enabled = 1;
-    static const uint8_t default_key[16] = {
-        0x2B, 0x7E, 0x15, 0x16, 0x28, 0xAE, 0xD2, 0xA6,
-        0xAB, 0xF7, 0x15, 0x88, 0x09, 0xCF, 0x4F, 0x3C
-    };
-    memcpy(g_lora_config.aes_key, default_key, 16);
+    config_reset_default_key();
 
     // 2. Load persistent config from Flash if valid
     config_load_from_flash();

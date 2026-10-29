@@ -90,6 +90,11 @@ void ssd1306_update_screen(void) {
 
     uint8_t col_low = g_is_sh1106 ? 0x02 : 0x00;
 
+    // Ensure display remains active and normal-mode before flushing pages
+    ssd1306_write_command(0xA4); // Output follows RAM content
+    ssd1306_write_command(0xA6); // Normal display (not inverted)
+    ssd1306_write_command(0xAF); // Display ON
+
     for (uint8_t m = 0; m < 8; m++) {
         ssd1306_write_command(0xB0 + m);
         ssd1306_write_command(col_low);

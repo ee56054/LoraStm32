@@ -432,7 +432,7 @@ int main(void)
         update_oled_display("Text Replied");
       }
     }
-    HAL_Delay(5);
+    HAL_Delay(1);
   }
   /* USER CODE END 3 */
 }

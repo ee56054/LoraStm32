@@ -11,12 +11,20 @@ static const int8_t quad_table[16] = {
 
 static uint8_t s_last_state = 0x03;
 static int8_t s_sub_count = 0;
-static uint32_t s_btn_press_tick = 0;
-static bool s_btn_pressed = false;
-static bool s_long_press_reported = false;
+static volatile int8_t s_pending_steps = 0;
+static volatile bool s_pending_confirm = false;
+static volatile bool s_pending_back = false;
+static bool s_initialized = false;
 
-static uint32_t s_back_press_tick = 0;
+static uint8_t s_confirm_debounce_cnt = 0;
+static bool s_confirm_pressed = false;
+
+static uint8_t s_back_debounce_cnt = 0;
 static bool s_back_pressed = false;
+
+static volatile uint32_t s_last_isr_tick = 0;
+
+#define BTN_DEBOUNCE_MS 20
 
 void ec11_init(void) {
     if (EC11_A_PORT == GPIOA || EC11_B_PORT == GPIOA || EC11_CONFIRM_PORT == GPIOA || EC11_BACK_PORT == GPIOA) __HAL_RCC_GPIOA_CLK_ENABLE();
@@ -40,18 +48,34 @@ void ec11_init(void) {
     GPIO_InitStruct.Pin = EC11_BACK_PIN;
     HAL_GPIO_Init(EC11_BACK_PORT, &GPIO_InitStruct);
 
+    // Allow internal pull-ups to charge any external RC debounce capacitors
+    HAL_Delay(10);
+
     // Initial state read
     uint8_t a = (HAL_GPIO_ReadPin(EC11_A_PORT, EC11_A_PIN) == GPIO_PIN_SET) ? 1 : 0;
     uint8_t b = (HAL_GPIO_ReadPin(EC11_B_PORT, EC11_B_PIN) == GPIO_PIN_SET) ? 1 : 0;
     s_last_state = (a << 1) | b;
     s_sub_count = 0;
+    s_pending_steps = 0;
+    s_pending_confirm = false;
+    s_pending_back = false;
+
+    s_confirm_debounce_cnt = 0;
+    s_confirm_pressed = (HAL_GPIO_ReadPin(EC11_CONFIRM_PORT, EC11_CONFIRM_PIN) == GPIO_PIN_RESET);
+
+    s_back_debounce_cnt = 0;
+    s_back_pressed = (HAL_GPIO_ReadPin(EC11_BACK_PORT, EC11_BACK_PIN) == GPIO_PIN_RESET);
+
+    s_last_isr_tick = HAL_GetTick();
+    s_initialized = true;
 }
 
-ec11_event_t ec11_update(void) {
-    ec11_event_t event = EC11_EVENT_NONE;
-    uint32_t now = HAL_GetTick();
+void ec11_tick_1ms(void) {
+    if (!s_initialized) {
+        return;
+    }
 
-    // 1. Read quadrature inputs
+    // 1. Sample quadrature encoder inputs (PA5, PA6)
     uint8_t a = (HAL_GPIO_ReadPin(EC11_A_PORT, EC11_A_PIN) == GPIO_PIN_SET) ? 1 : 0;
     uint8_t b = (HAL_GPIO_ReadPin(EC11_B_PORT, EC11_B_PIN) == GPIO_PIN_SET) ? 1 : 0;
     uint8_t current_state = (a << 1) | b;
@@ -63,69 +87,87 @@ ec11_event_t ec11_update(void) {
 
         if (step != 0) {
             s_sub_count += step;
-            // Standard EC11 encoders give 2 state transitions per detent click
-            if (s_sub_count >= 2) {
-                event = EC11_EVENT_CW;
+
+            // Full-cycle EC11 encoders rest at 0x03 (both A & B pulled HIGH at detent)
+            // and complete 4 quadrature transitions (11->10->00->01->11) per click.
+            // Emit strictly 1 step event per physical detent when returning to 0x03.
+            if (current_state == 0x03) {
+                if (s_sub_count >= 2) {
+                    if (s_pending_steps < 16) s_pending_steps++;
+                } else if (s_sub_count <= -2) {
+                    if (s_pending_steps > -16) s_pending_steps--;
+                }
                 s_sub_count = 0;
-            } else if (s_sub_count <= -2) {
-                event = EC11_EVENT_CCW;
+            } else if (s_sub_count >= 4) {
+                if (s_pending_steps < 16) s_pending_steps++;
+                s_sub_count = 0;
+            } else if (s_sub_count <= -4) {
+                if (s_pending_steps > -16) s_pending_steps--;
                 s_sub_count = 0;
             }
         }
     }
 
-    // 2. Read Confirm Push-Button (PA7, Active LOW with pullup)
-    bool btn_down = (HAL_GPIO_ReadPin(EC11_CONFIRM_PORT, EC11_CONFIRM_PIN) == GPIO_PIN_RESET);
+    s_last_isr_tick = HAL_GetTick();
 
-    if (btn_down) {
-        if (!s_btn_pressed) {
-            // Button pressed down
-            s_btn_pressed = true;
-            s_btn_press_tick = now;
-            s_long_press_reported = false;
-        } else {
-            // Button held down
-            if (!s_long_press_reported && (now - s_btn_press_tick >= 800)) {
-                s_long_press_reported = true;
-                if (event == EC11_EVENT_NONE) {
-                    event = EC11_EVENT_LONG_PRESS;
-                }
+    // 2. Debounce Confirm Push-Button (PA7, Active LOW with pull-up)
+    bool confirm_down = (HAL_GPIO_ReadPin(EC11_CONFIRM_PORT, EC11_CONFIRM_PIN) == GPIO_PIN_RESET);
+    if (confirm_down != s_confirm_pressed) {
+        s_confirm_debounce_cnt++;
+        if (s_confirm_debounce_cnt >= BTN_DEBOUNCE_MS) {
+            s_confirm_pressed = confirm_down;
+            s_confirm_debounce_cnt = 0;
+            if (s_confirm_pressed) {
+                // Trigger immediately on debounced press-down edge
+                s_pending_confirm = true;
             }
         }
     } else {
-        if (s_btn_pressed) {
-            // Button released
-            uint32_t duration = now - s_btn_press_tick;
-            s_btn_pressed = false;
-
-            if (!s_long_press_reported && duration >= 30 && duration < 800) {
-                if (event == EC11_EVENT_NONE) {
-                    event = EC11_EVENT_CLICK;
-                }
-            }
-        }
+        s_confirm_debounce_cnt = 0;
     }
 
-    // 3. Read Back Push-Button (PA9, Active LOW with pullup)
+    // 3. Debounce Back Push-Button (PA9, Active LOW with pull-up)
     bool back_down = (HAL_GPIO_ReadPin(EC11_BACK_PORT, EC11_BACK_PIN) == GPIO_PIN_RESET);
-
-    if (back_down) {
-        if (!s_back_pressed) {
-            s_back_pressed = true;
-            s_back_press_tick = now;
-        }
-    } else {
-        if (s_back_pressed) {
-            uint32_t back_duration = now - s_back_press_tick;
-            s_back_pressed = false;
-
-            if (back_duration >= 30) {
-                if (event == EC11_EVENT_NONE) {
-                    event = EC11_EVENT_BACK;
-                }
+    if (back_down != s_back_pressed) {
+        s_back_debounce_cnt++;
+        if (s_back_debounce_cnt >= BTN_DEBOUNCE_MS) {
+            s_back_pressed = back_down;
+            s_back_debounce_cnt = 0;
+            if (s_back_pressed) {
+                // Trigger immediately on debounced press-down edge
+                s_pending_back = true;
             }
         }
+    } else {
+        s_back_debounce_cnt = 0;
     }
+}
+
+ec11_event_t ec11_update(void) {
+    // Fallback if SysTick_Handler has not invoked ec11_tick_1ms() in this millisecond
+    if (HAL_GetTick() != s_last_isr_tick) {
+        ec11_tick_1ms();
+    }
+
+    ec11_event_t event = EC11_EVENT_NONE;
+
+    __disable_irq();
+    if (s_pending_confirm) {
+        s_pending_confirm = false;
+        s_pending_steps = 0;
+        event = EC11_EVENT_CLICK;
+    } else if (s_pending_back) {
+        s_pending_back = false;
+        s_pending_steps = 0;
+        event = EC11_EVENT_BACK;
+    } else if (s_pending_steps > 0) {
+        s_pending_steps--;
+        event = EC11_EVENT_CW;
+    } else if (s_pending_steps < 0) {
+        s_pending_steps++;
+        event = EC11_EVENT_CCW;
+    }
+    __enable_irq();
 
     return event;
 }

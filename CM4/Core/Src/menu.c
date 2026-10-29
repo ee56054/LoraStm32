@@ -32,15 +32,10 @@ typedef enum {
     LORA_ITEM_COUNT
 } lora_item_id_t;
 
-// Security Key Sub-Menu Items (Returning to Main Menu is handled strictly by PA9 Back button)
-typedef enum {
-    KEY_ITEM_VIEW = 0,
-    KEY_ITEM_PRESET,
-    KEY_ITEM_EDIT_BYTE,
-    KEY_ITEM_GEN_RANDOM,
-    KEY_ITEM_RESET_DEFAULT,
-    KEY_ITEM_COUNT
-} key_menu_item_id_t;
+// Security Key Menu: 16 bytes (1 byte per line) + 1 "Reset Default" option
+#define KEY_BYTE_COUNT          16
+#define KEY_ITEM_RESET_DEFAULT  16
+#define KEY_MENU_ITEM_COUNT     17
 
 // LoRa Parameter Presets
 static const uint32_t s_freq_options[] = {
@@ -98,25 +93,6 @@ static const sx126x_lora_cr_t s_cr_options[] = {
 #define CR_OPT_COUNT 4
 static const char *s_cr_names[] = {"4/5", "4/6", "4/7", "4/8"};
 
-// AES Key Presets
-#define KEY_PRESET_COUNT 4
-static const char *s_key_preset_names[KEY_PRESET_COUNT] = {
-    "1:Default FIPS",
-    "2:Test (00..0F)",
-    "3:Test (A5..5A)",
-    "4:Test (All 01)"
-};
-static const uint8_t s_key_preset_values[KEY_PRESET_COUNT][16] = {
-    { 0x2B, 0x7E, 0x15, 0x16, 0x28, 0xAE, 0xD2, 0xA6,
-      0xAB, 0xF7, 0x15, 0x88, 0x09, 0xCF, 0x4F, 0x3C },
-    { 0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07,
-      0x08, 0x09, 0x0A, 0x0B, 0x0C, 0x0D, 0x0E, 0x0F },
-    { 0xA5, 0x5A, 0xA5, 0x5A, 0xA5, 0x5A, 0xA5, 0x5A,
-      0xA5, 0x5A, 0xA5, 0x5A, 0xA5, 0x5A, 0xA5, 0x5A },
-    { 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01,
-      0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01 }
-};
-
 // State variables
 static ui_mode_t s_mode = UI_MODE_DASHBOARD;
 static uint32_t s_hw_id = 0;
@@ -140,19 +116,13 @@ static bool s_edit_valve2 = false;
 static uint8_t s_edit_security = 0;
 static uint8_t s_edit_slave_id = 1;
 static int8_t s_edit_lora_opt_idx = 0;
-
-static int8_t s_edit_key_preset_idx = 0;
-static int8_t s_edit_key_byte_idx = 0;
-static uint8_t s_temp_key[16];
+static uint8_t s_edit_key_byte_val = 0;
 
 // Function prototypes
 static void render_dashboard(void);
 static void render_main_menu(void);
 static void render_lora_menu(void);
 static void render_key_menu(void);
-static void render_key_view(void);
-static void render_key_preset(void);
-static void render_key_edit_byte(void);
 static void render_edit_main(void);
 static void render_edit_lora(void);
 static void render_info(void);
@@ -389,129 +359,50 @@ static void render_lora_menu(void) {
 static void render_key_menu(void) {
     ssd1306_fill(SSD1306_COLOR_BLACK);
 
-    // Header banner
+    // Header banner showing current byte index (1..16) or RESET option
     ssd1306_draw_filled_rectangle(0, 0, 128, 12, SSD1306_COLOR_WHITE);
-    ssd1306_set_cursor(16, 1);
-    ssd1306_write_string("AES KEY MENU", Font_7x10, SSD1306_COLOR_BLACK);
+    char hdr[24];
+    if (s_mode == UI_MODE_KEY_EDIT_BYTE) {
+        snprintf(hdr, sizeof(hdr), "EDIT BYTE [%02d/16]", s_cursor_idx + 1);
+        ssd1306_set_cursor(4, 1);
+    } else if (s_cursor_idx == KEY_ITEM_RESET_DEFAULT) {
+        snprintf(hdr, sizeof(hdr), "AES KEY [RESET]");
+        ssd1306_set_cursor(11, 1);
+    } else {
+        snprintf(hdr, sizeof(hdr), "AES KEY [%02d/16]", s_cursor_idx + 1);
+        ssd1306_set_cursor(10, 1);
+    }
+    ssd1306_write_string(hdr, Font_7x10, SSD1306_COLOR_BLACK);
 
+    // Maintain 4-item scrolling window (1 item per line)
     if (s_cursor_idx < s_scroll_top) {
         s_scroll_top = s_cursor_idx;
-    } else if (s_cursor_idx >= s_scroll_top + 3) {
-        s_scroll_top = s_cursor_idx - 2;
+    } else if (s_cursor_idx >= s_scroll_top + 4) {
+        s_scroll_top = s_cursor_idx - 3;
     }
 
     char line[24];
-    uint8_t y_coords[3] = {16, 32, 48};
+    uint8_t y_coords[4] = {15, 27, 39, 51};
 
-    for (int i = 0; i < 3; i++) {
+    for (int i = 0; i < 4; i++) {
         int item_idx = s_scroll_top + i;
-        if (item_idx >= KEY_ITEM_COUNT) break;
+        if (item_idx >= KEY_MENU_ITEM_COUNT) break;
 
-        char cursor_char = (item_idx == s_cursor_idx) ? '>' : ' ';
-
-        switch (item_idx) {
-            case KEY_ITEM_VIEW:
-                snprintf(line, sizeof(line), "%c View Key", cursor_char);
-                break;
-            case KEY_ITEM_PRESET:
-                snprintf(line, sizeof(line), "%c Key Presets >", cursor_char);
-                break;
-            case KEY_ITEM_EDIT_BYTE:
-                snprintf(line, sizeof(line), "%c Edit Bytes...", cursor_char);
-                break;
-            case KEY_ITEM_GEN_RANDOM:
-                snprintf(line, sizeof(line), "%c Gen Random Key", cursor_char);
-                break;
-            case KEY_ITEM_RESET_DEFAULT:
-                snprintf(line, sizeof(line), "%c Reset Default", cursor_char);
-                break;
-            default:
-                line[0] = '\0';
-                break;
+        if (item_idx == KEY_ITEM_RESET_DEFAULT) {
+            char cursor_char = (item_idx == s_cursor_idx) ? '>' : ' ';
+            snprintf(line, sizeof(line), "%c [Reset Default]", cursor_char);
+        } else if (item_idx == s_cursor_idx && s_mode == UI_MODE_KEY_EDIT_BYTE) {
+            snprintf(line, sizeof(line), "* Byte %02d: <0x%02X>",
+                     item_idx + 1, (unsigned int)s_edit_key_byte_val);
+        } else {
+            char cursor_char = (item_idx == s_cursor_idx) ? '>' : ' ';
+            snprintf(line, sizeof(line), "%c Byte %02d: [0x%02X]",
+                     cursor_char, item_idx + 1, (unsigned int)g_lora_config.aes_key[item_idx]);
         }
 
         ssd1306_set_cursor(0, y_coords[i]);
         ssd1306_write_string(line, Font_7x10, SSD1306_COLOR_WHITE);
     }
-
-    ssd1306_update_screen();
-}
-
-static void render_key_view(void) {
-    ssd1306_fill(SSD1306_COLOR_BLACK);
-
-    // Header banner
-    ssd1306_draw_filled_rectangle(0, 0, 128, 12, SSD1306_COLOR_WHITE);
-    ssd1306_set_cursor(10, 1);
-    ssd1306_write_string("AES-128 KEY (HEX)", Font_7x10, SSD1306_COLOR_BLACK);
-
-    char l1[24];
-    char l2[24];
-    snprintf(l1, sizeof(l1), "0-7:%02X%02X%02X%02X%02X%02X%02X%02X",
-             g_lora_config.aes_key[0], g_lora_config.aes_key[1], g_lora_config.aes_key[2], g_lora_config.aes_key[3],
-             g_lora_config.aes_key[4], g_lora_config.aes_key[5], g_lora_config.aes_key[6], g_lora_config.aes_key[7]);
-    snprintf(l2, sizeof(l2), "8-F:%02X%02X%02X%02X%02X%02X%02X%02X",
-             g_lora_config.aes_key[8], g_lora_config.aes_key[9], g_lora_config.aes_key[10], g_lora_config.aes_key[11],
-             g_lora_config.aes_key[12], g_lora_config.aes_key[13], g_lora_config.aes_key[14], g_lora_config.aes_key[15]);
-
-    ssd1306_set_cursor(0, 18);
-    ssd1306_write_string(l1, Font_7x10, SSD1306_COLOR_WHITE);
-
-    ssd1306_set_cursor(0, 32);
-    ssd1306_write_string(l2, Font_7x10, SSD1306_COLOR_WHITE);
-
-    ssd1306_set_cursor(0, 50);
-    ssd1306_write_string("Press PA9: Back", Font_7x10, SSD1306_COLOR_WHITE);
-
-    ssd1306_update_screen();
-}
-
-static void render_key_preset(void) {
-    ssd1306_fill(SSD1306_COLOR_BLACK);
-
-    // Header banner
-    ssd1306_draw_filled_rectangle(0, 0, 128, 12, SSD1306_COLOR_WHITE);
-    ssd1306_set_cursor(10, 1);
-    ssd1306_write_string("SELECT KEY PRESET", Font_7x10, SSD1306_COLOR_BLACK);
-
-    ssd1306_set_cursor(2, 16);
-    ssd1306_write_string(s_key_preset_names[s_edit_key_preset_idx], Font_7x10, SSD1306_COLOR_WHITE);
-
-    char preview[24];
-    const uint8_t *kp = s_key_preset_values[s_edit_key_preset_idx];
-    snprintf(preview, sizeof(preview), "%02X %02X %02X %02X..%02X",
-             kp[0], kp[1], kp[2], kp[3], kp[15]);
-    ssd1306_set_cursor(2, 32);
-    ssd1306_write_string(preview, Font_7x10, SSD1306_COLOR_WHITE);
-
-    ssd1306_set_cursor(0, 50);
-    ssd1306_write_string("PA7:Save PA9:Back", Font_7x10, SSD1306_COLOR_WHITE);
-
-    ssd1306_update_screen();
-}
-
-static void render_key_edit_byte(void) {
-    ssd1306_fill(SSD1306_COLOR_BLACK);
-
-    // Header banner
-    ssd1306_draw_filled_rectangle(0, 0, 128, 12, SSD1306_COLOR_WHITE);
-    ssd1306_set_cursor(14, 1);
-    ssd1306_write_string("EDIT KEY BYTE", Font_7x10, SSD1306_COLOR_BLACK);
-
-    char title[24];
-    snprintf(title, sizeof(title), "Byte [%02d/16]", s_edit_key_byte_idx + 1);
-    ssd1306_set_cursor(4, 16);
-    ssd1306_write_string(title, Font_7x10, SSD1306_COLOR_WHITE);
-
-    char val[24];
-    snprintf(val, sizeof(val), "Value: [ 0x%02X ]", s_temp_key[s_edit_key_byte_idx]);
-    ssd1306_set_cursor(4, 30);
-    ssd1306_write_string(val, Font_7x10, SSD1306_COLOR_WHITE);
-
-    ssd1306_set_cursor(0, 43);
-    ssd1306_write_string("Turn:Val PA7:Next", Font_7x10, SSD1306_COLOR_WHITE);
-    ssd1306_set_cursor(0, 54);
-    ssd1306_write_string("PA7:Hold PA9:Back", Font_7x10, SSD1306_COLOR_WHITE);
 
     ssd1306_update_screen();
 }
@@ -661,15 +552,15 @@ static void render_info(void) {
     // Header banner with current item range
     ssd1306_draw_filled_rectangle(0, 0, 128, 12, SSD1306_COLOR_WHITE);
     char hdr[24];
-    snprintf(hdr, sizeof(hdr), "INFO [%d-%d/%d]", s_info_scroll_top + 1, s_info_scroll_top + 3, INFO_ITEM_COUNT);
-    ssd1306_set_cursor(18, 1);
+    snprintf(hdr, sizeof(hdr), "INFO [%d-%d/%d]", s_info_scroll_top + 1, s_info_scroll_top + 4, INFO_ITEM_COUNT);
+    ssd1306_set_cursor(14, 1);
     ssd1306_write_string(hdr, Font_7x10, SSD1306_COLOR_BLACK);
 
-    // Render 3 lines, exactly 1 value per line
-    uint8_t y_coords[3] = {15, 27, 39};
+    // Render 4 lines, exactly 1 value per line
+    uint8_t y_coords[4] = {15, 27, 39, 51};
     char buf[24];
 
-    for (int i = 0; i < 3; i++) {
+    for (int i = 0; i < 4; i++) {
         int item_idx = s_info_scroll_top + i;
         if (item_idx >= INFO_ITEM_COUNT) break;
 
@@ -677,10 +568,6 @@ static void render_info(void) {
         ssd1306_set_cursor(2, y_coords[i]);
         ssd1306_write_string(buf, Font_7x10, SSD1306_COLOR_WHITE);
     }
-
-    // Footer banner
-    ssd1306_set_cursor(0, 51);
-    ssd1306_write_string("Press PA9: Back", Font_7x10, SSD1306_COLOR_WHITE);
 
     ssd1306_update_screen();
 }
@@ -706,18 +593,20 @@ void menu_process(ec11_event_t event) {
             if (event == EC11_EVENT_CW) {
                 if (s_dash_scroll_top < DASHBOARD_ITEM_COUNT - 4) {
                     s_dash_scroll_top++;
-                    render_dashboard();
                 }
+                render_dashboard();
             } else if (event == EC11_EVENT_CCW) {
                 if (s_dash_scroll_top > 0) {
                     s_dash_scroll_top--;
-                    render_dashboard();
                 }
+                render_dashboard();
             } else if (event == EC11_EVENT_CLICK) {
                 s_mode = UI_MODE_MAIN_MENU;
                 s_cursor_idx = 0;
                 s_scroll_top = 0;
                 render_main_menu();
+            } else if (event == EC11_EVENT_BACK) {
+                render_dashboard();
             }
             break;
 
@@ -725,13 +614,13 @@ void menu_process(ec11_event_t event) {
             if (event == EC11_EVENT_CW) {
                 if (s_cursor_idx < MAIN_ITEM_COUNT - 1) {
                     s_cursor_idx++;
-                    render_main_menu();
                 }
+                render_main_menu();
             } else if (event == EC11_EVENT_CCW) {
                 if (s_cursor_idx > 0) {
                     s_cursor_idx--;
-                    render_main_menu();
                 }
+                render_main_menu();
             } else if (event == EC11_EVENT_BACK) {
                 s_mode = UI_MODE_DASHBOARD;
                 render_dashboard();
@@ -780,6 +669,7 @@ void menu_process(ec11_event_t event) {
                         render_info();
                         break;
                     default:
+                        render_main_menu();
                         break;
                 }
             }
@@ -789,13 +679,13 @@ void menu_process(ec11_event_t event) {
             if (event == EC11_EVENT_CW) {
                 if (s_cursor_idx < LORA_ITEM_COUNT - 1) {
                     s_cursor_idx++;
-                    render_lora_menu();
                 }
+                render_lora_menu();
             } else if (event == EC11_EVENT_CCW) {
                 if (s_cursor_idx > 0) {
                     s_cursor_idx--;
-                    render_lora_menu();
                 }
+                render_lora_menu();
             } else if (event == EC11_EVENT_BACK) {
                 s_mode = UI_MODE_MAIN_MENU;
                 s_cursor_idx = MAIN_ITEM_LORA_CONFIG;
@@ -828,122 +718,54 @@ void menu_process(ec11_event_t event) {
 
         case UI_MODE_KEY_MENU:
             if (event == EC11_EVENT_CW) {
-                if (s_cursor_idx < KEY_ITEM_COUNT - 1) {
+                if (s_cursor_idx < KEY_MENU_ITEM_COUNT - 1) {
                     s_cursor_idx++;
-                    render_key_menu();
                 }
+                render_key_menu();
             } else if (event == EC11_EVENT_CCW) {
                 if (s_cursor_idx > 0) {
                     s_cursor_idx--;
-                    render_key_menu();
                 }
+                render_key_menu();
             } else if (event == EC11_EVENT_BACK) {
                 s_mode = UI_MODE_MAIN_MENU;
                 s_cursor_idx = MAIN_ITEM_SEC_KEY;
                 s_scroll_top = (s_cursor_idx > 2) ? (s_cursor_idx - 2) : 0;
                 render_main_menu();
             } else if (event == EC11_EVENT_CLICK) {
-                switch (s_cursor_idx) {
-                    case KEY_ITEM_VIEW:
-                        s_mode = UI_MODE_KEY_VIEW;
-                        render_key_view();
-                        break;
-                    case KEY_ITEM_PRESET:
-                        s_edit_key_preset_idx = 0;
-                        s_mode = UI_MODE_KEY_PRESET;
-                        render_key_preset();
-                        break;
-                    case KEY_ITEM_EDIT_BYTE:
-                        memcpy(s_temp_key, g_lora_config.aes_key, 16);
-                        s_edit_key_byte_idx = 0;
-                        s_mode = UI_MODE_KEY_EDIT_BYTE;
-                        render_key_edit_byte();
-                        break;
-                    case KEY_ITEM_GEN_RANDOM: {
-                        uint8_t rand_key[16];
-                        for (int i = 0; i < 16; i += 4) {
-                            uint32_t rnd = HAL_GetUIDw0() ^ HAL_GetUIDw1() ^ HAL_GetTick() ^ (HAL_GetUIDw2() + (uint32_t)i * 1103515245U);
-                            rand_key[i]   = (uint8_t)(rnd & 0xFF);
-                            rand_key[i+1] = (uint8_t)((rnd >> 8) & 0xFF);
-                            rand_key[i+2] = (uint8_t)((rnd >> 16) & 0xFF);
-                            rand_key[i+3] = (uint8_t)((rnd >> 24) & 0xFF);
-                        }
-                        lora_security_set_key(rand_key);
-                        memcpy(g_lora_config.aes_key, rand_key, 16);
-                        config_save_to_flash();
-                        s_mode = UI_MODE_KEY_VIEW;
-                        render_key_view();
-                        break;
-                    }
-                    case KEY_ITEM_RESET_DEFAULT: {
-                        static const uint8_t factory_key[16] = {
-                            0x2B, 0x7E, 0x15, 0x16, 0x28, 0xAE, 0xD2, 0xA6,
-                            0xAB, 0xF7, 0x15, 0x88, 0x09, 0xCF, 0x4F, 0x3C
-                        };
-                        lora_security_set_key(factory_key);
-                        memcpy(g_lora_config.aes_key, factory_key, 16);
-                        config_save_to_flash();
-                        s_mode = UI_MODE_KEY_VIEW;
-                        render_key_view();
-                        break;
-                    }
-                    default:
-                        break;
+                if (s_cursor_idx == KEY_ITEM_RESET_DEFAULT) {
+                    config_reset_default_key();
+                    lora_security_set_key(g_lora_config.aes_key);
+                    s_cursor_idx = 0;
+                    s_scroll_top = 0;
+                    render_key_menu();
+                    config_save_to_flash();
+                } else {
+                    s_edit_key_byte_val = g_lora_config.aes_key[s_cursor_idx];
+                    s_mode = UI_MODE_KEY_EDIT_BYTE;
+                    render_key_menu();
                 }
-            }
-            break;
-
-        case UI_MODE_KEY_VIEW:
-            if (event == EC11_EVENT_BACK) {
-                s_mode = UI_MODE_KEY_MENU;
-                render_key_menu();
-            }
-            break;
-
-        case UI_MODE_KEY_PRESET:
-            if (event == EC11_EVENT_CW) {
-                if (s_edit_key_preset_idx < KEY_PRESET_COUNT - 1) {
-                    s_edit_key_preset_idx++;
-                    render_key_preset();
-                }
-            } else if (event == EC11_EVENT_CCW) {
-                if (s_edit_key_preset_idx > 0) {
-                    s_edit_key_preset_idx--;
-                    render_key_preset();
-                }
-            } else if (event == EC11_EVENT_BACK) {
-                s_mode = UI_MODE_KEY_MENU;
-                render_key_menu();
-            } else if (event == EC11_EVENT_CLICK) {
-                lora_security_set_key(s_key_preset_values[s_edit_key_preset_idx]);
-                memcpy(g_lora_config.aes_key, s_key_preset_values[s_edit_key_preset_idx], 16);
-                config_save_to_flash();
-                s_mode = UI_MODE_KEY_MENU;
-                render_key_menu();
             }
             break;
 
         case UI_MODE_KEY_EDIT_BYTE:
             if (event == EC11_EVENT_CW) {
-                s_temp_key[s_edit_key_byte_idx]++;
-                render_key_edit_byte();
+                s_edit_key_byte_val++;
+                render_key_menu();
             } else if (event == EC11_EVENT_CCW) {
-                s_temp_key[s_edit_key_byte_idx]--;
-                render_key_edit_byte();
+                s_edit_key_byte_val--;
+                render_key_menu();
             } else if (event == EC11_EVENT_BACK) {
+                // Cancel editing this byte and return to key byte list
                 s_mode = UI_MODE_KEY_MENU;
                 render_key_menu();
             } else if (event == EC11_EVENT_CLICK) {
-                // Advance to next byte (0..15)
-                s_edit_key_byte_idx = (s_edit_key_byte_idx + 1) % 16;
-                render_key_edit_byte();
-            } else if (event == EC11_EVENT_LONG_PRESS) {
-                // Long press commits all 16 bytes
-                lora_security_set_key(s_temp_key);
-                memcpy(g_lora_config.aes_key, s_temp_key, 16);
+                // Save edited byte to config & flash, then return to key byte list
+                g_lora_config.aes_key[s_cursor_idx] = s_edit_key_byte_val;
+                lora_security_set_key(g_lora_config.aes_key);
+                s_mode = UI_MODE_KEY_MENU;
+                render_key_menu();
                 config_save_to_flash();
-                s_mode = UI_MODE_KEY_VIEW;
-                render_key_view();
             }
             break;
 
@@ -968,20 +790,25 @@ void menu_process(ec11_event_t event) {
                 s_mode = UI_MODE_MAIN_MENU;
                 render_main_menu();
             } else if (event == EC11_EVENT_CLICK) {
+                s_mode = UI_MODE_MAIN_MENU;
                 if (s_cursor_idx == MAIN_ITEM_VALVE1) {
                     modbus_app_set_valve_state(0, s_edit_valve1);
+                    render_main_menu();
                 } else if (s_cursor_idx == MAIN_ITEM_VALVE2) {
                     modbus_app_set_valve_state(1, s_edit_valve2);
+                    render_main_menu();
                 } else if (s_cursor_idx == MAIN_ITEM_SECURITY) {
                     g_lora_config.security_enabled = s_edit_security;
+                    render_main_menu();
                     config_save_to_flash();
                 } else if (s_cursor_idx == MAIN_ITEM_SLAVE_ID) {
                     modbus_app_set_slave_id(s_edit_slave_id);
                     g_lora_config.slave_id = s_edit_slave_id;
+                    render_main_menu();
                     config_save_to_flash();
+                } else {
+                    render_main_menu();
                 }
-                s_mode = UI_MODE_MAIN_MENU;
-                render_main_menu();
             }
             break;
 
@@ -1036,25 +863,26 @@ void menu_process(ec11_event_t event) {
                         break;
                 }
 
-                config_save_to_flash();
-                radio_reconfigure();
-
                 s_mode = UI_MODE_LORA_MENU;
                 render_lora_menu();
+                config_save_to_flash();
+                radio_reconfigure();
             }
             break;
 
         case UI_MODE_INFO:
             if (event == EC11_EVENT_CW) {
-                if (s_info_scroll_top < INFO_ITEM_COUNT - 3) {
+                if (s_info_scroll_top < INFO_ITEM_COUNT - 4) {
                     s_info_scroll_top++;
-                    render_info();
                 }
+                render_info();
             } else if (event == EC11_EVENT_CCW) {
                 if (s_info_scroll_top > 0) {
                     s_info_scroll_top--;
-                    render_info();
                 }
+                render_info();
+            } else if (event == EC11_EVENT_CLICK) {
+                render_info();
             } else if (event == EC11_EVENT_BACK) {
                 s_mode = UI_MODE_MAIN_MENU;
                 render_main_menu();
