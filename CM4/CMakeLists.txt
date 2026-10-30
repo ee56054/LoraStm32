@@ -78,6 +78,7 @@ target_sources(${CMAKE_PROJECT_NAME} PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/Core/Src/lora_security.c
     ${CMAKE_CURRENT_SOURCE_DIR}/Core/Src/ec11.c
     ${CMAKE_CURRENT_SOURCE_DIR}/Core/Src/menu.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/Core/Src/rtos.c
 )
 
 # Link directories setup

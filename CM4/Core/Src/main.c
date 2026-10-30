@@ -24,6 +24,7 @@
 #include "lora_security.h"
 #include "ec11.h"
 #include "menu.h"
+#include "rtos.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -56,6 +57,17 @@ static volatile bool rx_packet_received = false;
 static volatile bool tx_done_flag = false;
 static uint8_t rx_payload_buf[256];
 static uint16_t rx_payload_len = 0;
+
+/* RTOS Task Control Blocks, Static Stacks, Semaphores & Mutex */
+static rtos_tcb_t s_lora_task_tcb;
+static uint32_t s_lora_task_stack[512] __attribute__((aligned(8)));
+
+static rtos_tcb_t s_ui_task_tcb;
+static uint32_t s_ui_task_stack[512] __attribute__((aligned(8)));
+
+static rtos_sem_t s_rx_pkt_sem;
+static rtos_sem_t s_tx_done_sem;
+static rtos_mutex_t s_app_mutex;
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -67,6 +79,8 @@ static void MX_I2C2_Init(void);
 static void sx126x_transmit_packet(const uint8_t *payload, const uint8_t payload_len);
 static void update_oled_display(const char *status_msg);
 static void on_valve_state_changed(uint8_t valve_idx, bool is_open);
+static void lora_modbus_task(void *arg);
+static void ui_screen_task(void *arg);
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
@@ -109,6 +123,8 @@ static void poll_xkc_sensors(bool force_update) {
 void radio_reconfigure(void) {
   if (sx126x_device.context == NULL) return;
 
+  HAL_NVIC_DisableIRQ(SUBGHZ_Radio_IRQn);
+
   // Set RF frequency
   sx126x_set_rf_freq(sx126x_device.context, g_lora_config.frequency);
 
@@ -138,6 +154,8 @@ void radio_reconfigure(void) {
   sx126x_hal_rf_switch_rx();
   sx126x_set_rx(sx126x_device.context, 0);
 
+  HAL_NVIC_EnableIRQ(SUBGHZ_Radio_IRQn);
+
   uart_printf("[RADIO] Applied config: Freq=%lu Hz, SF=%d, Power=%d dBm\r\n",
               (unsigned long)g_lora_config.frequency,
               (int)g_lora_config.spreading_factor,
@@ -165,6 +183,7 @@ void sx126x_radio_irq_callback(void) {
 
     sx126x_hal_rf_switch_rx();
     sx126x_set_rx(sx126x_device.context, 0);
+    rtos_sem_give_from_isr(&s_tx_done_sem);
   } else if (irq_mask & SX126X_IRQ_RX_DONE) {
     sx126x_rx_buffer_status_t rx_buffer_status;
     sx126x_pkt_status_lora_t pkt_status;
@@ -192,12 +211,13 @@ void sx126x_radio_irq_callback(void) {
                 (unsigned long)hardware_id, (unsigned int)len_to_read,
                 (int)pkt_status.rssi_pkt_in_dbm, (int)pkt_status.snr_pkt_in_db);
 
-    // Signal main loop that a packet was received
+    // Signal LoRa RTOS task that a packet was received
     rx_packet_received = true;
 
     // Return to continuous RX
     sx126x_hal_rf_switch_rx();
     sx126x_set_rx(sx126x_device.context, 0);
+    rtos_sem_give_from_isr(&s_rx_pkt_sem);
   }
 }
 
@@ -236,12 +256,19 @@ static void sx126x_transmit_packet(const uint8_t *payload,
   sx126x_write_buffer(sx126x_device.context, 0x00, tx_data, tx_len);
 
   // Enable RF switch for TX and start transmission
+  rtos_sem_init(&s_tx_done_sem, 0);
   sx126x_hal_rf_switch_tx();
   sx126x_set_tx(sx126x_device.context, 5000);
 
-  // Wait until TX is completed via interrupt or timeout
-  for (int i = 0; i < 500 && !tx_done_flag; ++i) {
-    HAL_Delay(5);
+  // Yield CPU to UI_Screen_Task while waiting for TX_DONE interrupt (up to 2500 ms)
+  if (rtos_is_running()) {
+    rtos_mutex_unlock(&s_app_mutex);
+    rtos_sem_take(&s_tx_done_sem, 2500);
+    rtos_mutex_lock(&s_app_mutex);
+  } else {
+    for (int i = 0; i < 500 && !tx_done_flag; ++i) {
+      HAL_Delay(5);
+    }
   }
 
   // Restore RX packet parameters and return to continuous RX mode
@@ -255,6 +282,87 @@ static void sx126x_transmit_packet(const uint8_t *payload,
 
   sx126x_hal_rf_switch_rx();
   sx126x_set_rx(sx126x_device.context, 0);
+}
+
+static void lora_modbus_task(void *arg) {
+  (void)arg;
+  char tx_payload[256];
+  uint8_t plain_buf[256];
+
+  while (1) {
+    // Sleep until woken by SUBGHZ_Radio_IRQHandler (RX_DONE)
+    rtos_sem_take(&s_rx_pkt_sem, RTOS_WAIT_FOREVER);
+
+    while (rx_packet_received) {
+      rx_packet_received = false;
+
+      rtos_mutex_lock(&s_app_mutex);
+
+      uint16_t plain_len = 0;
+      const uint8_t *proc_buf = rx_payload_buf;
+      uint16_t proc_len = rx_payload_len;
+
+      if (lora_security_is_encrypted(rx_payload_buf, rx_payload_len)) {
+        if (lora_security_decrypt(rx_payload_buf, rx_payload_len, plain_buf, &plain_len)) {
+          proc_buf = plain_buf;
+          proc_len = plain_len;
+          uart_printf("[SECURITY] Decrypted %u bytes (MIC verified)\r\n", plain_len);
+          uart_print_hex("DECRYPTED: ", proc_buf, proc_len);
+        } else {
+          uart_printf("[SECURITY] Decryption FAILED (corrupted packet or invalid key)\r\n");
+          update_oled_display("SEC Auth Fail");
+          rtos_mutex_unlock(&s_app_mutex);
+          continue;
+        }
+      } else if (g_lora_config.security_enabled) {
+        uart_printf("[SECURITY] Warning: Plaintext packet received while security is enabled\r\n");
+      }
+
+      // Update runtime telemetry in Modbus holding registers
+      modbus_app_update_telemetry(tx_count);
+
+      // Process received packet via Modbus handler
+      int mb_res = modbus_app_process_packet((uint8_t *)proc_buf, proc_len);
+      if (mb_res > 0) {
+        tx_count++;
+        update_oled_display("Modbus Replied");
+      } else if (mb_res == 0) {
+        // Valid Modbus packet addressed to another slave or broadcast: do not transmit reply
+        update_oled_display("Modbus Ignored");
+      } else {
+        // Fallback for non-Modbus message: text reply
+        while (proc_len > 0 && (proc_buf[proc_len - 1] == '\r' || proc_buf[proc_len - 1] == '\n')) {
+          proc_len--;
+        }
+
+        tx_count++;
+        int pld_len = snprintf(tx_payload, sizeof(tx_payload), "REPLY [HW_ID: 0x%08lX | Count: %lu] -> %.*s\r\n",
+                               (unsigned long)hardware_id, (unsigned long)tx_count,
+                               (int)proc_len, proc_buf);
+
+        uart_send((const uint8_t *)tx_payload, pld_len);
+        sx126x_transmit_packet((const uint8_t *)tx_payload, (uint8_t)pld_len);
+        update_oled_display("Text Replied");
+      }
+
+      rtos_mutex_unlock(&s_app_mutex);
+    }
+  }
+}
+
+static void ui_screen_task(void *arg) {
+  (void)arg;
+
+  while (1) {
+    ec11_event_t enc_evt = ec11_update();
+
+    rtos_mutex_lock(&s_app_mutex);
+    poll_xkc_sensors(false);
+    menu_process(enc_evt);
+    rtos_mutex_unlock(&s_app_mutex);
+
+    rtos_delay(5);
+  }
 }
 /* USER CODE END 0 */
 
@@ -354,85 +462,40 @@ int main(void)
   sx126x_set_rx(sx126x_device.context, 0); // Continuous RX
   menu_init(hardware_id);
   update_oled_display("Listening (RX)");
+
+  // Initialize RTOS kernel, synchronization primitives, and tasks
+  rtos_init();
+  rtos_sem_init(&s_rx_pkt_sem, rx_packet_received ? 1U : 0U);
+  rtos_sem_init(&s_tx_done_sem, 0U);
+  rtos_mutex_init(&s_app_mutex);
+
+  rtos_task_create_static(&s_lora_task_tcb,
+                          "LoRa_Modbus",
+                          lora_modbus_task,
+                          NULL,
+                          s_lora_task_stack,
+                          sizeof(s_lora_task_stack) / sizeof(uint32_t),
+                          RTOS_PRIO_HIGH);
+
+  rtos_task_create_static(&s_ui_task_tcb,
+                          "UI_Screen",
+                          ui_screen_task,
+                          NULL,
+                          s_ui_task_stack,
+                          sizeof(s_ui_task_stack) / sizeof(uint32_t),
+                          RTOS_PRIO_NORMAL);
+
+  uart_printf("[RTOS] Starting preemptive scheduler (LoRa_Modbus_Task + UI_Screen_Task)\r\n");
+  rtos_start();
   /* USER CODE END 2 */
 
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */
-  char tx_payload[256];
   while (1)
   {
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
-    // Poll EC11 rotary encoder, XKC-Y26 liquid sensors (PB3/PB4) & update OLED menu
-    ec11_event_t enc_evt = ec11_update();
-    poll_xkc_sensors(false);
-    menu_process(enc_evt);
-
-    if (rx_packet_received)
-    {
-      rx_packet_received = false;
-
-      uint8_t plain_buf[256];
-      uint16_t plain_len = 0;
-      const uint8_t *proc_buf = rx_payload_buf;
-      uint16_t proc_len = rx_payload_len;
-
-      if (lora_security_is_encrypted(rx_payload_buf, rx_payload_len))
-      {
-        if (lora_security_decrypt(rx_payload_buf, rx_payload_len, plain_buf, &plain_len))
-        {
-          proc_buf = plain_buf;
-          proc_len = plain_len;
-          uart_printf("[SECURITY] Decrypted %u bytes (MIC verified)\r\n", plain_len);
-          uart_print_hex("DECRYPTED: ", proc_buf, proc_len);
-        }
-        else
-        {
-          uart_printf("[SECURITY] Decryption FAILED (corrupted packet or invalid key)\r\n");
-          update_oled_display("SEC Auth Fail");
-          continue;
-        }
-      }
-      else if (g_lora_config.security_enabled)
-      {
-        uart_printf("[SECURITY] Warning: Plaintext packet received while security is enabled\r\n");
-      }
-
-      // Update runtime telemetry in Modbus holding registers
-      modbus_app_update_telemetry(tx_count);
-
-      // Process received packet via Modbus handler
-      int mb_res = modbus_app_process_packet((uint8_t *)proc_buf, proc_len);
-      if (mb_res > 0)
-      {
-        tx_count++;
-        update_oled_display("Modbus Replied");
-      }
-      else if (mb_res == 0)
-      {
-        // Valid Modbus packet addressed to another slave or broadcast: do not transmit reply
-        update_oled_display("Modbus Ignored");
-      }
-      else
-      {
-        // Fallback for non-Modbus message: text reply
-        while (proc_len > 0 && (proc_buf[proc_len - 1] == '\r' || proc_buf[proc_len - 1] == '\n'))
-        {
-          proc_len--;
-        }
-
-        tx_count++;
-        int pld_len = snprintf(tx_payload, sizeof(tx_payload), "REPLY [HW_ID: 0x%08lX | Count: %lu] -> %.*s\r\n",
-                               (unsigned long)hardware_id, (unsigned long)tx_count,
-                               (int)proc_len, proc_buf);
-
-        uart_send((const uint8_t *)tx_payload, pld_len);
-        sx126x_transmit_packet((const uint8_t *)tx_payload, (uint8_t)pld_len);
-        update_oled_display("Text Replied");
-      }
-    }
-    HAL_Delay(1);
   }
   /* USER CODE END 3 */
 }

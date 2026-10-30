@@ -3,6 +3,7 @@
 #include "config.h"
 #include "modbus_app.h"
 #include "lora_security.h"
+#include "rtos.h"
 #include "main.h"
 #include <stdio.h>
 #include <string.h>
@@ -101,6 +102,7 @@ static uint32_t s_tx_count = 0;
 static char s_status_msg[32] = "Listening...";
 static uint32_t s_last_action_tick = 0;
 static bool s_display_off = false;
+static volatile bool s_screen_dirty = false;
 
 static int8_t s_cursor_idx = 0;
 static int8_t s_scroll_top = 0;
@@ -145,6 +147,7 @@ void menu_init(uint32_t hw_id) {
     s_dash_scroll_top = 0;
     s_info_scroll_top = 0;
     s_display_off = false;
+    s_screen_dirty = false;
     s_last_action_tick = HAL_GetTick();
     render_dashboard();
 }
@@ -156,7 +159,9 @@ void menu_update_status(const char *status_msg, uint32_t tx_count) {
         s_status_msg[sizeof(s_status_msg) - 1] = '\0';
     }
 
-    if (!s_display_off) {
+    if (rtos_is_running()) {
+        s_screen_dirty = true;
+    } else if (!s_display_off) {
         if (s_mode == UI_MODE_DASHBOARD) {
             render_dashboard();
         } else if (s_mode == UI_MODE_KEY_MENU) {
@@ -614,6 +619,7 @@ void menu_process(ec11_event_t event) {
 
     if (event != EC11_EVENT_NONE) {
         s_last_action_tick = now;
+        s_screen_dirty = false;
         if (s_display_off) {
             s_display_off = false;
             ssd1306_set_display_on(true);
@@ -621,6 +627,16 @@ void menu_process(ec11_event_t event) {
             return;
         }
     } else {
+        if (s_screen_dirty) {
+            s_screen_dirty = false;
+            if (!s_display_off) {
+                if (s_mode == UI_MODE_DASHBOARD) {
+                    render_dashboard();
+                } else if (s_mode == UI_MODE_KEY_MENU) {
+                    render_key_menu();
+                }
+            }
+        }
         if (!s_display_off && (now - s_last_action_tick >= DISPLAY_SLEEP_TIMEOUT_MS)) {
             s_display_off = true;
             ssd1306_set_display_on(false);
