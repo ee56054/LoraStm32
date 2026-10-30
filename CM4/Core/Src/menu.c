@@ -156,8 +156,12 @@ void menu_update_status(const char *status_msg, uint32_t tx_count) {
         s_status_msg[sizeof(s_status_msg) - 1] = '\0';
     }
 
-    if (!s_display_off && s_mode == UI_MODE_DASHBOARD) {
-        render_dashboard();
+    if (!s_display_off) {
+        if (s_mode == UI_MODE_DASHBOARD) {
+            render_dashboard();
+        } else if (s_mode == UI_MODE_KEY_MENU) {
+            render_key_menu();
+        }
     }
 }
 
@@ -781,6 +785,7 @@ void menu_process(ec11_event_t event) {
                 if (s_cursor_idx == KEY_ITEM_RESET_DEFAULT) {
                     config_reset_default_key();
                     lora_security_set_key(g_lora_config.aes_key);
+                    modbus_app_sync_security_registers();
                     s_cursor_idx = 0;
                     s_scroll_top = 0;
                     render_key_menu();
@@ -808,6 +813,7 @@ void menu_process(ec11_event_t event) {
                 // Save edited byte to config & flash, then return to key byte list
                 g_lora_config.aes_key[s_cursor_idx] = s_edit_key_byte_val;
                 lora_security_set_key(g_lora_config.aes_key);
+                modbus_app_sync_security_registers();
                 s_mode = UI_MODE_KEY_MENU;
                 render_key_menu();
                 config_save_to_flash();
@@ -844,6 +850,7 @@ void menu_process(ec11_event_t event) {
                     render_main_menu();
                 } else if (s_cursor_idx == MAIN_ITEM_SECURITY) {
                     g_lora_config.security_enabled = s_edit_security;
+                    modbus_app_sync_security_registers();
                     render_main_menu();
                     config_save_to_flash();
                 } else if (s_cursor_idx == MAIN_ITEM_SLAVE_ID) {

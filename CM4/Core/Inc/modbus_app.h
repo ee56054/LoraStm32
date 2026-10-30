@@ -92,6 +92,12 @@ void modbus_app_set_sensor_values(uint16_t sensor1, uint16_t sensor2);
 void modbus_app_update_telemetry(uint32_t tx_count);
 
 /**
+ * @brief Synchronize Security Enable (Reg 9) and AES-128 Pre-Shared Key (Regs 10..17)
+ *        in Modbus Holding Registers from g_lora_config
+ */
+void modbus_app_sync_security_registers(void);
+
+/**
  * @brief Check if incoming packet is a Modbus RTU frame and process it
  * @param rx_payload Pointer to received payload buffer
  * @param rx_len Length of received payload

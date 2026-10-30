@@ -185,13 +185,20 @@ void modbus_app_init(uint8_t slave_id, uint32_t hardware_id, modbus_tx_callback_
     // Slave ID in Holding Register 8
     mb_mapping->tab_registers[MODBUS_HOLD_REG_SLAVE_ID] = id;
 
-    // Security Enable in Holding Register 9
-    mb_mapping->tab_registers[MODBUS_HOLD_REG_SEC_ENABLE] = g_lora_config.security_enabled;
+    // Security Enable (Reg 9) and AES-128 Key (Regs 10..17, Read/Write)
+    modbus_app_sync_security_registers();
+  }
+}
 
-    // Key in Holding Registers 10..17 (Write-Only: initialized to 0)
-    for (int i = 0; i < MODBUS_HOLD_REG_SEC_KEY_COUNT; i++) {
-      mb_mapping->tab_registers[MODBUS_HOLD_REG_SEC_KEY_START + i] = 0;
-    }
+void modbus_app_sync_security_registers(void) {
+  if (mb_mapping == NULL) return;
+
+  mb_mapping->tab_registers[MODBUS_HOLD_REG_SEC_ENABLE] = g_lora_config.security_enabled;
+
+  for (int i = 0; i < MODBUS_HOLD_REG_SEC_KEY_COUNT; i++) {
+    uint16_t hi = (uint16_t)g_lora_config.aes_key[i * 2];
+    uint16_t lo = (uint16_t)g_lora_config.aes_key[i * 2 + 1];
+    mb_mapping->tab_registers[MODBUS_HOLD_REG_SEC_KEY_START + i] = (uint16_t)((hi << 8) | lo);
   }
 }
 
@@ -338,24 +345,24 @@ int modbus_app_process_packet(uint8_t *rx_payload, uint16_t rx_len) {
                   g_lora_config.security_enabled ? "AES-128" : "Disabled");
     }
 
-    // Detect if AES-128 key was updated via Holding Registers 10..17 (FC 16: Write Multiple Registers)
-    if (rx_payload[1] == 0x10) {
-      uint16_t reg_addr = (uint16_t)((rx_payload[2] << 8) | rx_payload[3]);
-      uint16_t reg_count = (uint16_t)((rx_payload[4] << 8) | rx_payload[5]);
-      if (reg_addr == MODBUS_HOLD_REG_SEC_KEY_START && reg_count == MODBUS_HOLD_REG_SEC_KEY_COUNT) {
-        uint8_t new_key[16];
-        for (uint8_t i = 0; i < MODBUS_HOLD_REG_SEC_KEY_COUNT; i++) {
-          uint16_t val = mb_mapping->tab_registers[MODBUS_HOLD_REG_SEC_KEY_START + i];
-          new_key[i * 2] = (uint8_t)(val >> 8);
-          new_key[i * 2 + 1] = (uint8_t)(val & 0xFF);
-          // Overwrite register back to 0 to prevent unauthorized key readback
-          mb_mapping->tab_registers[MODBUS_HOLD_REG_SEC_KEY_START + i] = 0;
-        }
-        lora_security_set_key(new_key);
-        memcpy(g_lora_config.aes_key, new_key, 16);
-        config_save_to_flash();
-        uart_printf("[MODBUS] AES-128 Key successfully updated and saved to Flash!\r\n");
+    // Detect if AES-128 key was modified via Holding Registers 10..17 (FC 06 Single or FC 16 Multiple)
+    uint8_t new_key[16];
+    bool key_changed = false;
+    for (uint8_t i = 0; i < MODBUS_HOLD_REG_SEC_KEY_COUNT; i++) {
+      uint16_t val = mb_mapping->tab_registers[MODBUS_HOLD_REG_SEC_KEY_START + i];
+      new_key[i * 2] = (uint8_t)(val >> 8);
+      new_key[i * 2 + 1] = (uint8_t)(val & 0xFF);
+      if (new_key[i * 2] != g_lora_config.aes_key[i * 2] ||
+          new_key[i * 2 + 1] != g_lora_config.aes_key[i * 2 + 1]) {
+        key_changed = true;
       }
+    }
+
+    if (key_changed) {
+      memcpy(g_lora_config.aes_key, new_key, 16);
+      lora_security_set_key(g_lora_config.aes_key);
+      config_save_to_flash();
+      uart_printf("[MODBUS] AES-128 Key updated via Holding Regs 10..17 and saved to Flash!\r\n");
     }
   }
 
